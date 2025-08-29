@@ -7,6 +7,7 @@ import { HistoryView } from '../views/HistoryView.js';
 import { AssistantView } from '../views/AssistantView.js';
 import { OnboardingView } from '../views/OnboardingView.js';
 import { AdvancedView } from '../views/AdvancedView.js';
+import { ProjectAnalysisView } from '../views/ProjectAnalysisView.js';
 
 export class CheatingDaddyApp extends LitElement {
     static styles = css`
@@ -233,8 +234,13 @@ export class CheatingDaddyApp extends LitElement {
         this.requestUpdate();
     }
 
+    handleProjectAnalysisClick() {
+        this.currentView = 'project-analysis';
+        this.requestUpdate();
+    }
+
     async handleClose() {
-        if (this.currentView === 'customize' || this.currentView === 'help' || this.currentView === 'history') {
+        if (this.currentView === 'customize' || this.currentView === 'help' || this.currentView === 'history' || this.currentView === 'project-analysis') {
             this.currentView = 'main';
         } else if (this.currentView === 'assistant') {
             cheddar.stopCapture();
@@ -437,6 +443,9 @@ export class CheatingDaddyApp extends LitElement {
             case 'advanced':
                 return html` <advanced-view></advanced-view> `;
 
+            case 'project-analysis':
+                return html` <project-analysis-view></project-analysis-view> `;
+
             case 'assistant':
                 return html`
                     <assistant-view
@@ -477,6 +486,7 @@ export class CheatingDaddyApp extends LitElement {
                         .onHelpClick=${() => this.handleHelpClick()}
                         .onHistoryClick=${() => this.handleHistoryClick()}
                         .onAdvancedClick=${() => this.handleAdvancedClick()}
+                        .onProjectAnalysisClick=${() => this.handleProjectAnalysisClick()}
                         .onCloseClick=${() => this.handleClose()}
                         .onBackClick=${() => this.handleBackClick()}
                         .onHideToggleClick=${() => this.handleHideToggle()}

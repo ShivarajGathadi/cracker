@@ -201,7 +201,7 @@ Provide direct exam answers in **markdown format**. Include the question text, t
     },
 };
 
-function buildSystemPrompt(promptParts, customPrompt = '', googleSearchEnabled = true) {
+function buildSystemPrompt(promptParts, customPrompt = '', googleSearchEnabled = true, projectContext = null) {
     const sections = [promptParts.intro, '\n\n', promptParts.formatRequirements];
 
     // Only add search usage section if Google Search is enabled
@@ -209,14 +209,47 @@ function buildSystemPrompt(promptParts, customPrompt = '', googleSearchEnabled =
         sections.push('\n\n', promptParts.searchUsage);
     }
 
+    // Add project analysis context if available
+    if (projectContext) {
+        sections.push('\n\n', getProjectAnalysisPrompt(projectContext));
+    }
+
     sections.push('\n\n', promptParts.content, '\n\nUser-provided context\n-----\n', customPrompt, '\n-----\n\n', promptParts.outputInstructions);
 
     return sections.join('');
 }
 
-function getSystemPrompt(profile, customPrompt = '', googleSearchEnabled = true) {
+function getProjectAnalysisPrompt(projectContext) {
+    return `**CODE PROJECT ANALYSIS CONTEXT:**
+You have access to detailed analysis of the user's project code. Use this information to provide **EXACT** technical answers with **PRECISE** file locations and line numbers.
+
+**Project Information:**
+- **Name:** ${projectContext.name}
+- **Technologies:** ${projectContext.analysis.technologies.join(', ')}
+- **Total Files:** ${projectContext.stats.totalFiles}
+- **Total Lines:** ${projectContext.stats.totalLines.toLocaleString()}
+- **Functions:** ${projectContext.stats.functionCount}
+- **Classes:** ${projectContext.stats.classCount}
+
+**CRITICAL INSTRUCTIONS FOR CODE QUESTIONS:**
+When the interviewer asks about code implementation, architecture, or specific technical details:
+
+1. **Always provide EXACT file locations**: "The implementation is in \`src/components/UserAuth.js\` at **lines 45-67**"
+2. **Reference specific function/class names**: "The \`authenticateUser\` function handles this logic"
+3. **Mention code structure**: "This follows the MVC pattern with controllers in \`src/controllers/\`"
+4. **Be precise about line numbers**: "The error handling is implemented at **line 123** in \`utils/errorHandler.js\`"
+
+**Example Response Style:**
+Interviewer: "How do you handle user authentication in your app?"
+You: "**User authentication is implemented in \`src/auth/AuthService.js\` starting at line 34.** The main \`login\` function uses JWT tokens and includes password hashing with bcrypt. The session management logic is in \`middleware/auth.js\` at lines 12-45, and the protected route wrapper is at line 78."
+
+**Project Structure Available:**
+${projectContext.structure ? 'Full project structure indexed and searchable for instant code location answers.' : 'Project structure analysis in progress.'}`;
+}
+
+function getSystemPrompt(profile, customPrompt = '', googleSearchEnabled = true, projectContext = null) {
     const promptParts = profilePrompts[profile] || profilePrompts.interview;
-    return buildSystemPrompt(promptParts, customPrompt, googleSearchEnabled);
+    return buildSystemPrompt(promptParts, customPrompt, googleSearchEnabled, projectContext);
 }
 
 module.exports = {

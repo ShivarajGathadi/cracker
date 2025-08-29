@@ -3,6 +3,11 @@ const { BrowserWindow, ipcMain } = require('electron');
 const { spawn } = require('child_process');
 const { saveDebugAudio } = require('../audioUtils');
 const { getSystemPrompt } = require('./prompts');
+const { CodeAnalyzer } = require('./codeAnalyzer');
+
+// Code analysis instance
+const codeAnalyzer = new CodeAnalyzer();
+let activeProject = null;
 
 // Conversation tracking variables
 let currentSessionId = null;
@@ -233,7 +238,7 @@ async function initializeGeminiSession(apiKey, customPrompt = '', profile = 'int
     const enabledTools = await getEnabledTools();
     const googleSearchEnabled = enabledTools.some(tool => tool.googleSearch);
 
-    const systemPrompt = getSystemPrompt(profile, customPrompt, googleSearchEnabled);
+    const systemPrompt = getSystemPrompt(profile, customPrompt, googleSearchEnabled, activeProject);
 
     // Initialize new conversation session (only if not reconnecting)
     if (!isReconnection) {
@@ -597,8 +602,86 @@ function setupGeminiIpcHandlers(geminiSessionRef) {
                 return { success: false, error: 'Invalid text message' };
             }
 
-            console.log('Sending text message:', text);
-            await geminiSessionRef.current.sendRealtimeInput({ text: text.trim() });
+            let messageToSend = text.trim();
+
+            // Debug: Check active project status
+            console.log(`🔍 DEBUG: Checking active project...`);
+            console.log(`🔍 DEBUG: activeProject variable:`, activeProject);
+            console.log(`🔍 DEBUG: Total projects in analyzer:`, codeAnalyzer.projects.size);
+            if (codeAnalyzer.projects.size > 0) {
+                console.log(`🔍 DEBUG: Available projects:`, Array.from(codeAnalyzer.projects.keys()));
+            }
+
+            // Check if there's an active project and enhance message if it's code-related
+            if (activeProject) {
+                console.log(`📁 Active project detected: ${activeProject.name}`);
+                
+                const codeKeywords = [
+                    'implementation', 'implement', 'code', 'function', 'class', 'method',
+                    'algorithm', 'logic', 'structure', 'architecture', 'pattern',
+                    'where is', 'how do you', 'how does', 'what does', 'show me',
+                    'find', 'locate', 'file', 'folder', 'directory', 'line',
+                    'authentication', 'validation', 'error handling', 'database',
+                    'api', 'endpoint', 'route', 'component', 'service', 'utility',
+                    'how many', 'count', 'list', 'files', 'classes', 'functions',
+                    'which', 'where', 'used'
+                ];
+                
+                const messageHasCodeKeywords = codeKeywords.some(keyword => 
+                    messageToSend.toLowerCase().includes(keyword)
+                );
+                
+                console.log(`🔍 Code keywords detected: ${messageHasCodeKeywords}`);
+                console.log(`📝 Original message: ${messageToSend}`);
+                
+                if (messageHasCodeKeywords) {
+                    console.log('🔍 Code-related question detected, searching project...');
+                    
+                    // Try to get a specific code answer first
+                    try {
+                        const codeAnswer = await codeAnalyzer.answerCodeQuestion(activeProject.name, messageToSend);
+                        
+                        console.log(`🎯 Code analysis result: ${codeAnswer.totalMatches} matches found`);
+                        
+                        if (codeAnswer.totalMatches > 0) {
+                            console.log('✅ Found specific code implementations');
+                            
+                            // Enhance the original message with code context
+                            messageToSend = `${text}
+
+**IMPORTANT: I found specific implementations in my analyzed project "${activeProject.name}". Here are the exact locations:**
+
+${codeAnswer.answer}
+
+Please provide a response based on these specific implementations and file locations from the "${activeProject.name}" project.`;
+                        } else {
+                            // Add general project context even if no specific matches
+                            console.log('📊 Adding general project context');
+                            messageToSend = `${text}
+
+**Context: I'm asking about the "${activeProject.name}" project which has been analyzed and contains:**
+- Total Files: ${activeProject.stats.totalFiles}
+- Lines of Code: ${activeProject.stats.totalLines.toLocaleString()}
+- Functions: ${activeProject.stats.functionCount}
+- Classes: ${activeProject.stats.classCount}
+- Technologies: ${activeProject.analysis.technologies.join(', ')}
+
+Please answer based on this specific project context, not external knowledge.`;
+                        }
+                    } catch (error) {
+                        console.warn('Failed to get code-specific answer:', error);
+                        // Still add basic project context
+                        messageToSend = `${text}
+
+**Context: I'm asking about the "${activeProject.name}" project.**`;
+                    }
+                }
+            } else {
+                console.log('❌ No active project detected');
+            }
+
+            console.log('Sending text message:', messageToSend);
+            await geminiSessionRef.current.sendRealtimeInput({ text: messageToSend });
             return { success: true };
         } catch (error) {
             console.error('Error sending text:', error);
@@ -681,6 +764,109 @@ function setupGeminiIpcHandlers(geminiSessionRef) {
             return { success: true };
         } catch (error) {
             console.error('Error updating Google Search setting:', error);
+            return { success: false, error: error.message };
+        }
+    });
+
+    // Code Analysis IPC Handlers
+    ipcMain.handle('analyze-project', async (event, { buffer, name }) => {
+        try {
+            console.log(`🔍 Starting project analysis: ${name}`);
+            const zipBuffer = Buffer.from(buffer);
+            const projectData = await codeAnalyzer.analyzeProject(zipBuffer, name);
+            
+            console.log(`✅ Project analysis completed: ${name}`);
+            return { success: true, project: projectData };
+        } catch (error) {
+            console.error('❌ Project analysis failed:', error);
+            return { success: false, error: error.message };
+        }
+    });
+
+    ipcMain.handle('get-analyzed-projects', async (event) => {
+        try {
+            const projects = Array.from(codeAnalyzer.projects.values());
+            return { success: true, projects };
+        } catch (error) {
+            console.error('Error getting analyzed projects:', error);
+            return { success: false, error: error.message };
+        }
+    });
+
+    ipcMain.handle('activate-project', async (event, projectName) => {
+        try {
+            const project = codeAnalyzer.projects.get(projectName);
+            if (!project) {
+                throw new Error(`Project ${projectName} not found`);
+            }
+            
+            activeProject = project;
+            console.log(`🎯 Activated project for Q&A: ${projectName}`);
+            
+            return { success: true, project: activeProject };
+        } catch (error) {
+            console.error('Error activating project:', error);
+            return { success: false, error: error.message };
+        }
+    });
+
+    ipcMain.handle('deactivate-project', async (event) => {
+        try {
+            const previousProject = activeProject?.name || null;
+            activeProject = null;
+            console.log(`🔄 Deactivated project: ${previousProject}`);
+            
+            return { success: true };
+        } catch (error) {
+            console.error('Error deactivating project:', error);
+            return { success: false, error: error.message };
+        }
+    });
+
+    ipcMain.handle('delete-project', async (event, projectName) => {
+        try {
+            if (activeProject?.name === projectName) {
+                activeProject = null;
+            }
+            
+            codeAnalyzer.projects.delete(projectName);
+            codeAnalyzer.codeIndices.delete(projectName);
+            
+            console.log(`🗑️ Deleted project: ${projectName}`);
+            return { success: true };
+        } catch (error) {
+            console.error('Error deleting project:', error);
+            return { success: false, error: error.message };
+        }
+    });
+
+    ipcMain.handle('answer-code-question', async (event, { projectName, question }) => {
+        try {
+            if (!projectName) {
+                projectName = activeProject?.name;
+            }
+            
+            if (!projectName) {
+                throw new Error('No project activated for code Q&A');
+            }
+            
+            const answer = await codeAnalyzer.answerCodeQuestion(projectName, question);
+            return { success: true, answer };
+        } catch (error) {
+            console.error('Error answering code question:', error);
+            return { success: false, error: error.message };
+        }
+    });
+
+    ipcMain.handle('get-active-project', async (event) => {
+        try {
+            return { 
+                success: true, 
+                project: activeProject,
+                isActive: !!activeProject 
+            };
+        } catch (error) {
+            console.error('Error getting active project:', error);
             return { success: false, error: error.message };
         }
     });
