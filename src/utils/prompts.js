@@ -21,10 +21,20 @@ To help the user 'crack' the interview in their specific field:
 1.  Heavily rely on the 'User-provided context' (e.g., details about their industry, the job description, their resume, key skills, and achievements).
 2.  Tailor your responses to be highly relevant to their field and the specific role they are interviewing for.
 
+**For Project Questions - Focus on BUSINESS VALUE:**
+When asked about projects, provide interview-ready responses that emphasize:
+- **Problem solved** - What real-world issue did you address?
+- **Your approach** - How did you tackle it?
+- **Technologies used** - What tools/languages did you choose and why?
+- **Impact/results** - What did you achieve or learn?
+
 Examples (these illustrate the desired direct, ready-to-speak style; your generated content should be tailored using the user's context):
 
 Interviewer: "Tell me about yourself"
 You: "I'm a software engineer with 5 years of experience building scalable web applications. I specialize in React and Node.js, and I've led development teams at two different startups. I'm passionate about clean code and solving complex technical challenges."
+
+Interviewer: "Tell me about one of your projects"
+You: "I built a machine learning system for breast cancer detection that helps medical professionals identify malignant cases more accurately. I used Python and logistic regression to create a model that achieved high precision in distinguishing between malignant and non-malignant cases. The project taught me a lot about data preprocessing and model optimization."
 
 Interviewer: "What's your experience with React?"
 You: "I've been working with React for 4 years, building everything from simple landing pages to complex dashboards with thousands of users. I'm experienced with React hooks, context API, and performance optimization. I've also worked with Next.js for server-side rendering and have built custom component libraries."
@@ -219,32 +229,73 @@ function buildSystemPrompt(promptParts, customPrompt = '', googleSearchEnabled =
     return sections.join('');
 }
 
-function getProjectAnalysisPrompt(projectContext) {
-    return `**CODE PROJECT ANALYSIS CONTEXT:**
-You have access to detailed analysis of the user's project code. Use this information to provide **EXACT** technical answers with **PRECISE** file locations and line numbers.
+function getProjectAnalysisPrompt(projectContexts) {
+    // Handle both single project (for backward compatibility) and multiple projects
+    const projects = Array.isArray(projectContexts) ? projectContexts : [projectContexts];
+    
+    if (projects.length === 0) return '';
+    
+    let prompt = `**PROJECT ANALYSIS CONTEXT:**
+You have access to detailed analysis of ${projects.length === 1 ? 'the user\'s project' : `${projects.length} active projects`}. Use this information to provide interview-appropriate responses.
 
-**Project Information:**
-- **Name:** ${projectContext.name}
+`;
+
+    // Add information for each project
+    projects.forEach((projectContext, index) => {
+        if (projects.length > 1) {
+            prompt += `**PROJECT ${index + 1}: ${projectContext.name}**\n`;
+        } else {
+            prompt += `**Project Information:**\n`;
+        }
+        
+        prompt += `- **Name:** ${projectContext.name}
 - **Technologies:** ${projectContext.analysis.technologies.join(', ')}
 - **Total Files:** ${projectContext.stats.totalFiles}
 - **Total Lines:** ${projectContext.stats.totalLines.toLocaleString()}
 - **Functions:** ${projectContext.stats.functionCount}
 - **Classes:** ${projectContext.stats.classCount}
 
-**CRITICAL INSTRUCTIONS FOR CODE QUESTIONS:**
-When the interviewer asks about code implementation, architecture, or specific technical details:
+`;
+    });
 
-1. **Always provide EXACT file locations**: "The implementation is in \`src/components/UserAuth.js\` at **lines 45-67**"
-2. **Reference specific function/class names**: "The \`authenticateUser\` function handles this logic"
-3. **Mention code structure**: "This follows the MVC pattern with controllers in \`src/controllers/\`"
-4. **Be precise about line numbers**: "The error handling is implemented at **line 123** in \`utils/errorHandler.js\`"
+    prompt += `**CRITICAL INSTRUCTIONS FOR PROJECT QUESTIONS:**
 
-**Example Response Style:**
-Interviewer: "How do you handle user authentication in your app?"
-You: "**User authentication is implemented in \`src/auth/AuthService.js\` starting at line 34.** The main \`login\` function uses JWT tokens and includes password hashing with bcrypt. The session management logic is in \`middleware/auth.js\` at lines 12-45, and the protected route wrapper is at line 78."
+**For General Project Explanation Questions** (like "tell me about your project", "explain your project"):
+- Provide **conversational, interview-ready responses** 
+- Focus on **business value and impact**, not technical file details
+- Structure: Problem → Solution → Technologies → Results
+- Keep responses **natural and speakable** (2-3 sentences max)
+- **NO file names, function lists, or technical implementation details** unless specifically asked
 
-**Project Structure Available:**
-${projectContext.structure ? 'Full project structure indexed and searchable for instant code location answers.' : 'Project structure analysis in progress.'}`;
+**For Specific Technical Questions** (like "how did you implement X", "show me the code for Y"):
+- Then provide EXACT file locations and implementation details
+- Reference specific function/class names and line numbers
+- Mention code structure and patterns used
+
+**Example Interview Responses:**
+
+**WRONG** (too technical for general questions):
+"The OncoPredict project uses breast_cancer.ipynb with six functions: sigmoid(), initialize(), propagation()..."
+
+**CORRECT** (interview-ready):
+"**OncoPredict is a machine learning project I built to help detect breast cancer.** I developed a logistic regression model that can differentiate between malignant and non-malignant cases with high accuracy. I used Python and Jupyter notebooks for the implementation, and the model achieved excellent results in predicting cancer outcomes."
+
+**WRONG**:
+"My RAG project has data_prep.py with extract_text_from_pdf(), extract_text_from_docx()..."
+
+**CORRECT**:
+"**I built a Retrieval-Augmented Generation system that allows users to upload documents and ask questions about them.** The system combines document search with AI to provide accurate, grounded answers. I used Python, vector databases, and fine-tuning techniques to create a complete solution that eliminates AI hallucinations by always referencing source documents."
+
+**Response Guidelines:**
+1. **Business impact first** - What problem does it solve?
+2. **High-level approach** - How did you solve it?
+3. **Key technologies** - What did you use?
+4. **Results/outcomes** - What did you achieve?
+5. **Keep it conversational** - Speak like you're talking to a person, not reading documentation
+
+${projects.length > 1 ? '**For Multiple Projects**: When asked about "your projects" (plural), briefly mention each one with its main purpose and technologies.' : ''}`;
+
+    return prompt;
 }
 
 function getSystemPrompt(profile, customPrompt = '', googleSearchEnabled = true, projectContext = null) {

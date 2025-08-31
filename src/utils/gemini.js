@@ -7,7 +7,7 @@ const { CodeAnalyzer } = require('./codeAnalyzer');
 
 // Code analysis instance
 const codeAnalyzer = new CodeAnalyzer();
-let activeProject = null;
+let activeProjects = new Set(); // Active projects for code analysis queries
 
 // Conversation tracking variables
 let currentSessionId = null;
@@ -238,7 +238,10 @@ async function initializeGeminiSession(apiKey, customPrompt = '', profile = 'int
     const enabledTools = await getEnabledTools();
     const googleSearchEnabled = enabledTools.some(tool => tool.googleSearch);
 
-    const systemPrompt = getSystemPrompt(profile, customPrompt, googleSearchEnabled, activeProject);
+    const activeProjectsList = Array.from(activeProjects).map(name => 
+        codeAnalyzer.projects.get(name)
+    ).filter(Boolean);
+    const systemPrompt = getSystemPrompt(profile, customPrompt, googleSearchEnabled, activeProjectsList);
 
     // Initialize new conversation session (only if not reconnecting)
     if (!isReconnection) {
@@ -604,16 +607,16 @@ function setupGeminiIpcHandlers(geminiSessionRef) {
 
             let messageToSend = text.trim();
 
-            // Debug: Check active project status
-            console.log(`🔍 DEBUG: Checking active project...`);
-            console.log(`🔍 DEBUG: activeProject variable:`, activeProject);
-            console.log(`🔍 DEBUG: Total projects in analyzer:`, codeAnalyzer.projects.size);
+            // Debug: Check active projects status
+            console.log(`DEBUG: Checking active projects...`);
+            console.log(`DEBUG: activeProjects:`, Array.from(activeProjects));
+            console.log(`DEBUG: Total projects in analyzer:`, codeAnalyzer.projects.size);
             if (codeAnalyzer.projects.size > 0) {
-                console.log(`🔍 DEBUG: Available projects:`, Array.from(codeAnalyzer.projects.keys()));
+                console.log(`DEBUG: Available projects:`, Array.from(codeAnalyzer.projects.keys()));
             }
 
-            // Smart project detection: Check if user is asking about a specific project by name
-            let targetProject = activeProject;
+            // Smart project detection: Check if user is asking about specific projects by name
+            let targetProjects = [];
             let allProjectsRequested = false;
             const availableProjects = Array.from(codeAnalyzer.projects.keys());
             
@@ -625,14 +628,17 @@ function setupGeminiIpcHandlers(geminiSessionRef) {
             
             if (messageHasMultiProjectKeywords && availableProjects.length > 1) {
                 allProjectsRequested = true;
-                console.log(`🎯 Detected request for all projects (${availableProjects.length} available)`);
+                targetProjects = availableProjects.map(name => codeAnalyzer.projects.get(name));
+                console.log(`Detected request for all projects (${availableProjects.length} available)`);
             } else {
                 // Look for project names mentioned in the message (case-insensitive and partial matching)
+                let specificProjectDetected = false;
+                
                 for (const projectName of availableProjects) {
                     const projectNameLower = projectName.toLowerCase();
                     const messageLower = messageToSend.toLowerCase();
                     
-                    console.log(`🔍 Checking project: "${projectName}" against message: "${messageToSend}"`);
+                    console.log(`Checking project: "${projectName}" against message: "${messageToSend}"`);
                     console.log(`   Project name (lower): "${projectNameLower}"`);
                     console.log(`   Message (lower): "${messageLower}"`);
                     
@@ -652,16 +658,23 @@ function setupGeminiIpcHandlers(geminiSessionRef) {
                     console.log(`   Has full name: ${hasFullName}`);
                     
                     if (hasProjectWord || hasFullName) {
-                        targetProject = codeAnalyzer.projects.get(projectName);
-                        console.log(`🎯 Detected specific project reference: ${projectName} (matched via: ${projectWords.join(', ')})`);
+                        targetProjects = [codeAnalyzer.projects.get(projectName)];
+                        specificProjectDetected = true;
+                        console.log(`Detected specific project reference: ${projectName} (matched via: ${projectWords.join(', ')})`);
                         break;
                     }
+                }
+                
+                // If no specific project detected, use all active projects
+                if (!specificProjectDetected && activeProjects.size > 0) {
+                    targetProjects = Array.from(activeProjects).map(name => codeAnalyzer.projects.get(name));
+                    console.log(`Using all active projects: [${Array.from(activeProjects).join(', ')}]`);
                 }
             }
 
             // Check if there's a target project (active or detected) and enhance message if it's code-related
             if (allProjectsRequested) {
-                console.log('📁 Providing information about all uploaded projects');
+                console.log('Providing information about all uploaded projects');
                 
                 // Create comprehensive overview of all projects
                 let allProjectsContext = `${text}
@@ -697,8 +710,10 @@ Please provide a detailed explanation about EACH of these specific uploaded proj
 
                 messageToSend = allProjectsContext;
                 
-            } else if (targetProject) {
-                console.log(`📁 Using project for context: ${targetProject.name}`);
+            } else if (targetProjects.length > 0) {
+                // Use the first matched project for context
+                const primaryProject = targetProjects[0];
+                console.log(`Using project for context: ${primaryProject.name}`);
                 
                 const codeKeywords = [
                     'implementation', 'implement', 'code', 'function', 'class', 'method',
@@ -727,15 +742,15 @@ Please provide a detailed explanation about EACH of these specific uploaded proj
                     messageToSend.toLowerCase().includes(keyword)
                 );
 
-                const isProjectRelated = messageHasCodeKeywords || messageHasProjectKeywords || (targetProject && targetProject !== activeProject);
+                const isProjectRelated = messageHasCodeKeywords || messageHasProjectKeywords || targetProjects.length > 0;
                 
-                console.log(`🔍 Code keywords detected: ${messageHasCodeKeywords}`);
-                console.log(`🔍 Project keywords detected: ${messageHasProjectKeywords}`);
-                console.log(`🔍 Specific project detected: ${targetProject && targetProject !== activeProject}`);
+                console.log(`Code keywords detected: ${messageHasCodeKeywords}`);
+                console.log(`Project keywords detected: ${messageHasProjectKeywords}`);
+                console.log(`Specific project detected: ${targetProjects.length > 0}`);
                 console.log(`📝 Original message: ${messageToSend}`);
                 
                 if (isProjectRelated) {
-                    console.log('🔍 Project-related question detected, enhancing with context...');
+                    console.log('Project-related question detected, enhancing with context...');
                     
                     // For project explanation questions, provide comprehensive project context
                     if (messageHasProjectKeywords) {
@@ -743,26 +758,26 @@ Please provide a detailed explanation about EACH of these specific uploaded proj
                         
                         const projectContext = `${text}
 
-**IMPORTANT: You are being asked about the specific uploaded project "${targetProject.name}". Here are the exact details from the analyzed project:**
+**IMPORTANT: You are being asked about the specific uploaded project "${primaryProject.name}". Here are the exact details from the analyzed project:**
 
 **Project Overview:**
-- **Name**: ${targetProject.name}
-- **Total Files**: ${targetProject.stats.totalFiles}
-- **Lines of Code**: ${targetProject.stats.totalLines.toLocaleString()}
-- **Functions**: ${targetProject.stats.functionCount}
-- **Classes**: ${targetProject.stats.classCount}
-- **File Types**: ${targetProject.stats.languages.join(', ')}
+- **Name**: ${primaryProject.name}
+- **Total Files**: ${primaryProject.stats.totalFiles}
+- **Lines of Code**: ${primaryProject.stats.totalLines.toLocaleString()}
+- **Functions**: ${primaryProject.stats.functionCount}
+- **Classes**: ${primaryProject.stats.classCount}
+- **File Types**: ${primaryProject.stats.languages.join(', ')}
 
 **Actual Project Files:**
-${targetProject.files.map(file => `- **${file.name}** (${file.lines ? file.lines.length : 0} lines)`).join('\n')}
+${primaryProject.files.map(file => `- **${file.name}** (${file.lines ? file.lines.length : 0} lines)`).join('\n')}
 
 **Functions Found in Project:**
-${targetProject.files.flatMap(file => 
+${primaryProject.files.flatMap(file => 
     file.functions ? file.functions.map(func => `- \`${func.name}()\` in ${file.name}`) : []
 ).join('\n') || '- No functions detected'}
 
 **Project Content Summary:**
-${targetProject.files.map(file => {
+${primaryProject.files.map(file => {
     if (file.name.endsWith('.md')) {
         return `- **${file.name}**: ${file.content.substring(0, 200)}...`;
     }
@@ -775,32 +790,32 @@ Please provide a detailed explanation about THIS SPECIFIC PROJECT based on the a
                     } else {
                         // For code-specific questions, try to get specific implementations
                         try {
-                            const codeAnswer = await codeAnalyzer.answerCodeQuestion(targetProject.name, messageToSend);
+                            const codeAnswer = await codeAnalyzer.answerCodeQuestion(primaryProject.name, messageToSend);
                             
-                            console.log(`🎯 Code analysis result: ${codeAnswer.totalMatches} matches found`);
+                            console.log(`Code analysis result: ${codeAnswer.totalMatches} matches found`);
                             
                             if (codeAnswer.totalMatches > 0) {
-                                console.log('✅ Found specific code implementations');
+                                console.log('Found specific code implementations');
                                 
                                 // Enhance the original message with code context
                                 messageToSend = `${text}
 
-**IMPORTANT: I found specific implementations in my analyzed project "${targetProject.name}". Here are the exact locations:**
+**IMPORTANT: I found specific implementations in my analyzed project "${primaryProject.name}". Here are the exact locations:**
 
 ${codeAnswer.answer}
 
-Please provide a response based on these specific implementations and file locations from the "${targetProject.name}" project.`;
+Please provide a response based on these specific implementations and file locations from the "${primaryProject.name}" project.`;
                             } else {
                                 // Add general project context even if no specific matches
                                 console.log('📊 Adding general project context');
                                 messageToSend = `${text}
 
-**Context: I'm asking about the "${targetProject.name}" project which has been analyzed and contains:**
-- Total Files: ${targetProject.stats.totalFiles}
-- Lines of Code: ${targetProject.stats.totalLines.toLocaleString()}
-- Functions: ${targetProject.stats.functionCount}
-- Classes: ${targetProject.stats.classCount}
-- Technologies: ${targetProject.stats.languages.join(', ')}
+**Context: I'm asking about the "${primaryProject.name}" project which has been analyzed and contains:**
+- Total Files: ${primaryProject.stats.totalFiles}
+- Lines of Code: ${primaryProject.stats.totalLines.toLocaleString()}
+- Functions: ${primaryProject.stats.functionCount}
+- Classes: ${primaryProject.stats.classCount}
+- Technologies: ${primaryProject.stats.languages.join(', ')}
 
 Please answer based on this specific project context, not external knowledge.`;
                             }
@@ -809,7 +824,7 @@ Please answer based on this specific project context, not external knowledge.`;
                             // Still add basic project context
                             messageToSend = `${text}
 
-**Context: I'm asking about the "${targetProject.name}" project.**`;
+**Context: I'm asking about the "${primaryProject.name}" project.**`;
                         }
                     }
                 }
@@ -908,11 +923,11 @@ Please answer based on this specific project context, not external knowledge.`;
     // Code Analysis IPC Handlers
     ipcMain.handle('analyze-project', async (event, { buffer, name }) => {
         try {
-            console.log(`🔍 Starting project analysis: ${name}`);
+            console.log(`Starting project analysis: ${name}`);
             const zipBuffer = Buffer.from(buffer);
             const projectData = await codeAnalyzer.analyzeProject(zipBuffer, name);
             
-            console.log(`✅ Project analysis completed: ${name}`);
+            console.log(`Project analysis completed: ${name}`);
             return { success: true, project: projectData };
         } catch (error) {
             console.error('❌ Project analysis failed:', error);
@@ -923,9 +938,20 @@ Please answer based on this specific project context, not external knowledge.`;
     ipcMain.handle('get-analyzed-projects', async (event) => {
         try {
             const projects = Array.from(codeAnalyzer.projects.values());
-            return { success: true, projects };
+            const activeProjectNames = Array.from(activeProjects);
+            return { success: true, projects, activeProjects: activeProjectNames };
         } catch (error) {
             console.error('Error getting analyzed projects:', error);
+            return { success: false, error: error.message };
+        }
+    });
+
+    ipcMain.handle('get-active-projects', async (event) => {
+        try {
+            const activeProjectNames = Array.from(activeProjects);
+            return { success: true, activeProjects: activeProjectNames };
+        } catch (error) {
+            console.error('Error getting active projects:', error);
             return { success: false, error: error.message };
         }
     });
@@ -937,23 +963,59 @@ Please answer based on this specific project context, not external knowledge.`;
                 throw new Error(`Project ${projectName} not found`);
             }
             
-            activeProject = project;
-            console.log(`🎯 Activated project for Q&A: ${projectName}`);
+            // Add to active projects set
+            activeProjects.add(projectName);
             
-            return { success: true, project: activeProject };
+            // Set as selected project (last activated becomes the primary one for queries)
+            // Save active projects to localStorage via renderer
+            const windows = BrowserWindow.getAllWindows();
+            if (windows.length > 0) {
+                const activeProjectNames = Array.from(activeProjects);
+                await windows[0].webContents.executeJavaScript(`
+                    localStorage.setItem('activeProjects', JSON.stringify(${JSON.stringify(activeProjectNames)}));
+                `);
+            }
+            
+            console.log(`Project added to active list: ${projectName}`);
+            console.log(`Active projects: [${Array.from(activeProjects).join(', ')}]`);
+            
+            return { success: true, activeProjects: Array.from(activeProjects) };
         } catch (error) {
             console.error('Error activating project:', error);
             return { success: false, error: error.message };
         }
     });
 
-    ipcMain.handle('deactivate-project', async (event) => {
+    ipcMain.handle('deactivate-project', async (event, projectName) => {
         try {
-            const previousProject = activeProject?.name || null;
-            activeProject = null;
-            console.log(`🔄 Deactivated project: ${previousProject}`);
+            if (!projectName) {
+                // Deactivate all projects
+                activeProjects.clear();
+                console.log(`Deactivated all projects`);
+            } else {
+                // Deactivate specific project
+                activeProjects.delete(projectName);
+                console.log(`Deactivated project: ${projectName}`);
+            }
             
-            return { success: true };
+            // Update localStorage via renderer
+            const windows = BrowserWindow.getAllWindows();
+            if (windows.length > 0) {
+                const activeProjectNames = Array.from(activeProjects);
+                if (activeProjectNames.length === 0) {
+                    await windows[0].webContents.executeJavaScript(`
+                        localStorage.removeItem('activeProjects');
+                    `);
+                } else {
+                    await windows[0].webContents.executeJavaScript(`
+                        localStorage.setItem('activeProjects', JSON.stringify(${JSON.stringify(activeProjectNames)}));
+                    `);
+                }
+            }
+            
+            console.log(`� Active projects: [${Array.from(activeProjects).join(', ')}]`);
+            
+            return { success: true, activeProjects: Array.from(activeProjects) };
         } catch (error) {
             console.error('Error deactivating project:', error);
             return { success: false, error: error.message };
@@ -962,14 +1024,33 @@ Please answer based on this specific project context, not external knowledge.`;
 
     ipcMain.handle('delete-project', async (event, projectName) => {
         try {
-            if (activeProject?.name === projectName) {
-                activeProject = null;
+            // Remove from active projects if it's active
+            if (activeProjects.has(projectName)) {
+                activeProjects.delete(projectName);
+                
+                // Update localStorage via renderer
+                const windows = BrowserWindow.getAllWindows();
+                if (windows.length > 0) {
+                    const activeProjectNames = Array.from(activeProjects);
+                    if (activeProjectNames.length === 0) {
+                        await windows[0].webContents.executeJavaScript(`
+                            localStorage.removeItem('activeProjects');
+                        `);
+                    } else {
+                        await windows[0].webContents.executeJavaScript(`
+                            localStorage.setItem('activeProjects', JSON.stringify(${JSON.stringify(activeProjectNames)}));
+                        `);
+                    }
+                }
             }
             
             codeAnalyzer.projects.delete(projectName);
             codeAnalyzer.codeIndices.delete(projectName);
             
-            console.log(`🗑️ Deleted project: ${projectName}`);
+            // Delete persisted data
+            await codeAnalyzer.deleteProjectData(projectName);
+            
+            console.log(`Deleted project: ${projectName}`);
             return { success: true };
         } catch (error) {
             console.error('Error deleting project:', error);
@@ -977,33 +1058,72 @@ Please answer based on this specific project context, not external knowledge.`;
         }
     });
 
+    ipcMain.handle('restore-active-project', async (event) => {
+        try {
+            // This will be called by the renderer to restore active projects state
+            const windows = BrowserWindow.getAllWindows();
+            if (windows.length > 0) {
+                // Restore active projects
+                const activeProjectsResult = await windows[0].webContents.executeJavaScript(`
+                    localStorage.getItem('activeProjects');
+                `);
+                
+                if (activeProjectsResult) {
+                    try {
+                        const projectNames = JSON.parse(activeProjectsResult);
+                        activeProjects.clear();
+                        
+                        for (const projectName of projectNames) {
+                            if (codeAnalyzer.projects.has(projectName)) {
+                                activeProjects.add(projectName);
+                            }
+                        }
+                        
+                        console.log(`Restored active projects: [${Array.from(activeProjects).join(', ')}]`);
+                        return { success: true, activeProjects: Array.from(activeProjects) };
+                    } catch (parseError) {
+                        console.error('Failed to parse stored active projects:', parseError);
+                    }
+                }
+            }
+            
+            return { success: true, activeProjects: [] };
+        } catch (error) {
+            console.error('Error restoring active projects:', error);
+            return { success: false, error: error.message };
+        }
+    });
+
+    // Get selected project
+    ipcMain.handle('get-selected-project', async (event) => {
+        try {
+            return { success: true, activeProjects: Array.from(activeProjects) };
+        } catch (error) {
+            console.error('Error getting selected project:', error);
+            return { success: false, error: error.message };
+        }
+    });
+
     ipcMain.handle('answer-code-question', async (event, { projectName, question }) => {
         try {
             if (!projectName) {
-                projectName = activeProject?.name;
+                // Use ALL active projects if no specific project mentioned
+                if (activeProjects.size === 0) {
+                    throw new Error('No projects activated for code Q&A');
+                }
+                
+                // For multiple projects, we'll use the regular chat flow which handles multiple projects
+                return await sendMessage(null, question);
             }
             
-            if (!projectName) {
-                throw new Error('No project activated for code Q&A');
+            if (!projectName || !activeProjects.has(projectName)) {
+                throw new Error('Specified project not found or not activated');
             }
             
             const answer = await codeAnalyzer.answerCodeQuestion(projectName, question);
             return { success: true, answer };
         } catch (error) {
             console.error('Error answering code question:', error);
-            return { success: false, error: error.message };
-        }
-    });
-
-    ipcMain.handle('get-active-project', async (event) => {
-        try {
-            return { 
-                success: true, 
-                project: activeProject,
-                isActive: !!activeProject 
-            };
-        } catch (error) {
-            console.error('Error getting active project:', error);
             return { success: false, error: error.message };
         }
     });

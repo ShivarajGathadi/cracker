@@ -184,6 +184,81 @@ export class ProjectAnalysisView extends LitElement {
             border-color: var(--start-button-hover-border);
         }
 
+        .action-button.activated {
+            background: #22c55e;
+            color: white;
+            border-color: #16a34a;
+            font-weight: 600;
+        }
+
+        .action-button.activated:hover {
+            background: #16a34a;
+            border-color: #15803d;
+        }
+
+        .project-active-indicator {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            background: #22c55e;
+            color: white;
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-size: 10px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .pulse {
+            width: 8px;
+            height: 8px;
+            background: white;
+            border-radius: 50%;
+            animation: pulse 2s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .action-button.activated {
+            background: #22c55e;
+            color: white;
+            border-color: #16a34a;
+        }
+
+        .action-button.activated:hover {
+            background: #16a34a;
+            border-color: #15803d;
+        }
+
+        .project-active-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: #22c55e;
+            color: white;
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+
+        .project-active-indicator .pulse {
+            width: 8px;
+            height: 8px;
+            background: #dcfce7;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
         .loading {
             display: flex;
             align-items: center;
@@ -254,6 +329,7 @@ export class ProjectAnalysisView extends LitElement {
 
     static properties = {
         projects: { type: Array },
+        activeProjects: { type: Array },
         isUploading: { type: Boolean },
         uploadError: { type: String },
         successMessage: { type: String }
@@ -262,6 +338,7 @@ export class ProjectAnalysisView extends LitElement {
     constructor() {
         super();
         this.projects = [];
+        this.activeProjects = [];
         this.isUploading = false;
         this.uploadError = '';
         this.successMessage = '';
@@ -274,7 +351,11 @@ export class ProjectAnalysisView extends LitElement {
             const result = await ipcRenderer.invoke('get-analyzed-projects');
             if (result.success) {
                 this.projects = result.projects;
+                this.activeProjects = result.activeProjects || [];
             }
+            
+            // Restore active projects state on startup
+            await ipcRenderer.invoke('restore-active-project');
         } catch (error) {
             console.error('Failed to load projects:', error);
         }
@@ -352,6 +433,9 @@ export class ProjectAnalysisView extends LitElement {
             const { ipcRenderer } = window.require('electron');
             const result = await ipcRenderer.invoke('activate-project', projectName);
             if (result.success) {
+                this.activeProjects = result.activeProjects || [];
+                this.successMessage = `Project "${projectName}" activated for Q&A! (${this.activeProjects.length} total active)`;
+                setTimeout(() => this.successMessage = '', 3000);
                 this.dispatchEvent(new CustomEvent('project-activated', {
                     detail: { projectName },
                     bubbles: true
@@ -362,13 +446,35 @@ export class ProjectAnalysisView extends LitElement {
         }
     }
 
+    async deactivateProject(projectName) {
+        try {
+            const { ipcRenderer } = window.require('electron');
+            const result = await ipcRenderer.invoke('deactivate-project', projectName);
+            if (result.success) {
+                this.activeProjects = result.activeProjects || [];
+                this.successMessage = `Project "${projectName}" deactivated! (${this.activeProjects.length} remaining active)`;
+                setTimeout(() => this.successMessage = '', 3000);
+                this.dispatchEvent(new CustomEvent('project-deactivated', {
+                    detail: { projectName },
+                    bubbles: true
+                }));
+            }
+        } catch (error) {
+            this.uploadError = `Failed to deactivate project: ${error.message}`;
+        }
+    }
+
     async deleteProject(projectName) {
         if (confirm(`Are you sure you want to delete the analysis for "${projectName}"?`)) {
             try {
                 const { ipcRenderer } = window.require('electron');
                 const result = await ipcRenderer.invoke('delete-project', projectName);
                 if (result.success) {
+                    // Remove from active projects if it was active
+                    this.activeProjects = this.activeProjects.filter(name => name !== projectName);
                     await this.loadProjects();
+                    this.successMessage = `🗑️ Project "${projectName}" deleted successfully!`;
+                    setTimeout(() => this.successMessage = '', 3000);
                 }
             } catch (error) {
                 this.uploadError = `Failed to delete project: ${error.message}`;
@@ -446,7 +552,15 @@ export class ProjectAnalysisView extends LitElement {
                     ${this.projects.map(project => html`
                         <div class="project-item">
                             <div class="project-header">
-                                <div class="project-name">${project.name}</div>
+                                <div style="display: flex; align-items: center; gap: 12px;">
+                                    <div class="project-name">${project.name}</div>
+                                    ${this.activeProjects.includes(project.name) ? html`
+                                        <div class="project-active-indicator">
+                                            <div class="pulse"></div>
+                                            ACTIVE
+                                        </div>
+                                    ` : ''}
+                                </div>
                                 <div class="project-date">${this.formatDate(project.timestamp)}</div>
                             </div>
 
@@ -480,14 +594,20 @@ export class ProjectAnalysisView extends LitElement {
                             </div>
 
                             <div class="project-actions">
-                                <button class="action-button primary" @click=${() => this.activateProject(project.name)}>
-                                    🎯 Activate for Q&A
-                                </button>
+                                ${this.activeProjects.includes(project.name) ? html`
+                                    <button class="action-button activated" @click=${() => this.deactivateProject(project.name)}>
+                                        ACTIVE - Click to Deactivate
+                                    </button>
+                                ` : html`
+                                    <button class="action-button primary" @click=${() => this.activateProject(project.name)}>
+                                        Activate for Q&A
+                                    </button>
+                                `}
                                 <button class="action-button" @click=${() => this.showProjectDetails(project)}>
-                                    📊 View Details
+                                    View Details
                                 </button>
                                 <button class="action-button" @click=${() => this.deleteProject(project.name)}>
-                                    🗑️ Delete
+                                    Delete
                                 </button>
                             </div>
                         </div>

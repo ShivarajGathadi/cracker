@@ -1,6 +1,7 @@
 const fs = require('fs').promises;
 const path = require('path');
 const AdmZip = require('adm-zip');
+const os = require('os');
 
 /**
  * Code Analysis Engine for Project Q&A Feature
@@ -11,6 +12,7 @@ class CodeAnalyzer {
     constructor() {
         this.projects = new Map(); // Store analyzed projects
         this.codeIndices = new Map(); // Store code search indices
+        this.dataDir = path.join(os.homedir(), '.cheating-daddy', 'projects');
         this.supportedExtensions = new Set([
             // JavaScript/TypeScript
             '.js', '.ts', '.jsx', '.tsx', '.mjs', '.cjs',
@@ -53,6 +55,53 @@ class CodeAnalyzer {
             '.gitignore', '.dockerignore', '.eslintrc', '.babelrc',
             'README', 'LICENSE', 'CHANGELOG', 'CONTRIBUTING'
         ]);
+        
+        // Initialize data directory (async operation will run in background)
+        this.initializeDataDirectory().catch(console.error);
+    }
+
+    /**
+     * Initialize the data directory for persistent storage
+     */
+    async initializeDataDirectory() {
+        try {
+            await fs.mkdir(this.dataDir, { recursive: true });
+            await this.loadPersistedProjects();
+        } catch (error) {
+            console.error('Failed to initialize data directory:', error);
+        }
+    }
+
+    /**
+     * Load persisted projects from disk
+     */
+    async loadPersistedProjects() {
+        try {
+            const files = await fs.readdir(this.dataDir);
+            const projectFiles = files.filter(f => f.endsWith('.json'));
+            
+            for (const file of projectFiles) {
+                try {
+                    const filePath = path.join(this.dataDir, file);
+                    const data = await fs.readFile(filePath, 'utf8');
+                    const projectData = JSON.parse(data);
+                    
+                    this.projects.set(projectData.name, projectData);
+                    
+                    // Rebuild search index from stored data
+                    if (projectData.files) {
+                        const searchIndex = await this.buildSearchIndex(projectData.files);
+                        this.codeIndices.set(projectData.name, searchIndex);
+                    }
+                    
+                    console.log(`📁 Loaded persisted project: ${projectData.name}`);
+                } catch (error) {
+                    console.error(`Failed to load project from ${file}:`, error);
+                }
+            }
+        } catch (error) {
+            console.error('Failed to load persisted projects:', error);
+        }
     }
 
     /**
@@ -1011,8 +1060,35 @@ class CodeAnalyzer {
     }
 
     async saveProjectData(projectName, projectData) {
-        // Implementation for persisting project data
-        console.log(`💾 Saving project data for: ${projectName}`);
+        try {
+            // Create a clean copy without circular references
+            const cleanProjectData = {
+                ...projectData,
+                files: projectData.files.map(file => ({
+                    ...file,
+                    // Ensure no circular references in file data
+                }))
+            };
+            
+            const filePath = path.join(this.dataDir, `${projectName.replace(/[^\w\-]/g, '_')}.json`);
+            await fs.writeFile(filePath, JSON.stringify(cleanProjectData, null, 2), 'utf8');
+            console.log(`💾 Saved project data for: ${projectName}`);
+        } catch (error) {
+            console.error(`Failed to save project data for ${projectName}:`, error);
+        }
+    }
+
+    /**
+     * Delete persisted project data
+     */
+    async deleteProjectData(projectName) {
+        try {
+            const filePath = path.join(this.dataDir, `${projectName.replace(/[^\w\-]/g, '_')}.json`);
+            await fs.unlink(filePath);
+            console.log(`�️ Deleted persisted data for: ${projectName}`);
+        } catch (error) {
+            console.error(`Failed to delete project data for ${projectName}:`, error);
+        }
     }
 }
 
