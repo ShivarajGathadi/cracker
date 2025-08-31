@@ -632,13 +632,26 @@ function setupGeminiIpcHandlers(geminiSessionRef) {
                     const projectNameLower = projectName.toLowerCase();
                     const messageLower = messageToSend.toLowerCase();
                     
+                    console.log(`🔍 Checking project: "${projectName}" against message: "${messageToSend}"`);
+                    console.log(`   Project name (lower): "${projectNameLower}"`);
+                    console.log(`   Message (lower): "${messageLower}"`);
+                    
                     // Extract key words from project name for flexible matching
                     const projectWords = projectNameLower.split(/[\s\-_]+/).filter(word => word.length > 2);
+                    console.log(`   Project words: [${projectWords.join(', ')}]`);
                     
                     // Check if any significant project words are mentioned in the message
-                    const hasProjectWord = projectWords.some(word => messageLower.includes(word));
+                    const hasProjectWord = projectWords.some(word => {
+                        const found = messageLower.includes(word);
+                        console.log(`     Checking word "${word}": ${found}`);
+                        return found;
+                    });
+                    const hasFullName = messageLower.includes(projectNameLower);
                     
-                    if (hasProjectWord || messageLower.includes(projectNameLower)) {
+                    console.log(`   Has project word: ${hasProjectWord}`);
+                    console.log(`   Has full name: ${hasFullName}`);
+                    
+                    if (hasProjectWord || hasFullName) {
                         targetProject = codeAnalyzer.projects.get(projectName);
                         console.log(`🎯 Detected specific project reference: ${projectName} (matched via: ${projectWords.join(', ')})`);
                         break;
@@ -730,18 +743,18 @@ Please provide a detailed explanation about EACH of these specific uploaded proj
                         
                         const projectContext = `${text}
 
-**IMPORTANT: You are being asked about the specific uploaded project "${activeProject.name}". Here are the exact details from the analyzed project:**
+**IMPORTANT: You are being asked about the specific uploaded project "${targetProject.name}". Here are the exact details from the analyzed project:**
 
 **Project Overview:**
-- **Name**: ${activeProject.name}
-- **Total Files**: ${activeProject.stats.totalFiles}
-- **Lines of Code**: ${activeProject.stats.totalLines.toLocaleString()}
-- **Functions**: ${activeProject.stats.functionCount}
-- **Classes**: ${activeProject.stats.classCount}
-- **File Types**: ${activeProject.stats.languages.join(', ')}
+- **Name**: ${targetProject.name}
+- **Total Files**: ${targetProject.stats.totalFiles}
+- **Lines of Code**: ${targetProject.stats.totalLines.toLocaleString()}
+- **Functions**: ${targetProject.stats.functionCount}
+- **Classes**: ${targetProject.stats.classCount}
+- **File Types**: ${targetProject.stats.languages.join(', ')}
 
 **Actual Project Files:**
-${activeProject.files.map(file => `- **${file.name}** (${file.lines ? file.lines.length : 0} lines)`).join('\n')}
+${targetProject.files.map(file => `- **${file.name}** (${file.lines ? file.lines.length : 0} lines)`).join('\n')}
 
 **Functions Found in Project:**
 ${targetProject.files.flatMap(file => 
