@@ -626,54 +626,105 @@ function setupGeminiIpcHandlers(geminiSessionRef) {
                     'how many', 'count', 'list', 'files', 'classes', 'functions',
                     'which', 'where', 'used'
                 ];
+
+                // Project-specific keywords for explaining/describing the project
+                const projectKeywords = [
+                    'explain', 'describe', 'tell me about', 'what is', 'about your project',
+                    'your project', 'this project', 'project does', 'project work',
+                    'overview', 'summary', 'purpose', 'goal', 'objective'
+                ];
                 
                 const messageHasCodeKeywords = codeKeywords.some(keyword => 
                     messageToSend.toLowerCase().includes(keyword)
                 );
+
+                const messageHasProjectKeywords = projectKeywords.some(keyword => 
+                    messageToSend.toLowerCase().includes(keyword)
+                );
+
+                const isProjectRelated = messageHasCodeKeywords || messageHasProjectKeywords;
                 
                 console.log(`🔍 Code keywords detected: ${messageHasCodeKeywords}`);
+                console.log(`🔍 Project keywords detected: ${messageHasProjectKeywords}`);
                 console.log(`📝 Original message: ${messageToSend}`);
                 
-                if (messageHasCodeKeywords) {
-                    console.log('🔍 Code-related question detected, searching project...');
+                if (isProjectRelated) {
+                    console.log('🔍 Project-related question detected, enhancing with context...');
                     
-                    // Try to get a specific code answer first
-                    try {
-                        const codeAnswer = await codeAnalyzer.answerCodeQuestion(activeProject.name, messageToSend);
+                    // For project explanation questions, provide comprehensive project context
+                    if (messageHasProjectKeywords) {
+                        console.log('� Adding comprehensive project context for explanation');
                         
-                        console.log(`🎯 Code analysis result: ${codeAnswer.totalMatches} matches found`);
-                        
-                        if (codeAnswer.totalMatches > 0) {
-                            console.log('✅ Found specific code implementations');
+                        const projectContext = `${text}
+
+**IMPORTANT: You are being asked about the specific uploaded project "${activeProject.name}". Here are the exact details from the analyzed project:**
+
+**Project Overview:**
+- **Name**: ${activeProject.name}
+- **Total Files**: ${activeProject.stats.totalFiles}
+- **Lines of Code**: ${activeProject.stats.totalLines.toLocaleString()}
+- **Functions**: ${activeProject.stats.functionCount}
+- **Classes**: ${activeProject.stats.classCount}
+- **File Types**: ${activeProject.stats.languages.join(', ')}
+
+**Actual Project Files:**
+${activeProject.files.map(file => `- **${file.name}** (${file.lines ? file.lines.length : 0} lines)`).join('\n')}
+
+**Functions Found in Project:**
+${activeProject.files.flatMap(file => 
+    file.functions ? file.functions.map(func => `- \`${func.name}()\` in ${file.name}`) : []
+).join('\n') || '- No functions detected'}
+
+**Project Content Summary:**
+${activeProject.files.map(file => {
+    if (file.name.endsWith('.md')) {
+        return `- **${file.name}**: ${file.content.substring(0, 200)}...`;
+    }
+    return `- **${file.name}**: ${file.extension} file with ${file.functions?.length || 0} functions`;
+}).join('\n')}
+
+Please provide a detailed explanation about THIS SPECIFIC PROJECT based on the analyzed files and content above, not general information about similar projects.`;
+
+                        messageToSend = projectContext;
+                    } else {
+                        // For code-specific questions, try to get specific implementations
+                        try {
+                            const codeAnswer = await codeAnalyzer.answerCodeQuestion(activeProject.name, messageToSend);
                             
-                            // Enhance the original message with code context
-                            messageToSend = `${text}
+                            console.log(`🎯 Code analysis result: ${codeAnswer.totalMatches} matches found`);
+                            
+                            if (codeAnswer.totalMatches > 0) {
+                                console.log('✅ Found specific code implementations');
+                                
+                                // Enhance the original message with code context
+                                messageToSend = `${text}
 
 **IMPORTANT: I found specific implementations in my analyzed project "${activeProject.name}". Here are the exact locations:**
 
 ${codeAnswer.answer}
 
 Please provide a response based on these specific implementations and file locations from the "${activeProject.name}" project.`;
-                        } else {
-                            // Add general project context even if no specific matches
-                            console.log('📊 Adding general project context');
-                            messageToSend = `${text}
+                            } else {
+                                // Add general project context even if no specific matches
+                                console.log('📊 Adding general project context');
+                                messageToSend = `${text}
 
 **Context: I'm asking about the "${activeProject.name}" project which has been analyzed and contains:**
 - Total Files: ${activeProject.stats.totalFiles}
 - Lines of Code: ${activeProject.stats.totalLines.toLocaleString()}
 - Functions: ${activeProject.stats.functionCount}
 - Classes: ${activeProject.stats.classCount}
-- Technologies: ${activeProject.analysis.technologies.join(', ')}
+- Technologies: ${activeProject.stats.languages.join(', ')}
 
 Please answer based on this specific project context, not external knowledge.`;
-                        }
-                    } catch (error) {
-                        console.warn('Failed to get code-specific answer:', error);
-                        // Still add basic project context
-                        messageToSend = `${text}
+                            }
+                        } catch (error) {
+                            console.warn('Failed to get code-specific answer:', error);
+                            // Still add basic project context
+                            messageToSend = `${text}
 
 **Context: I'm asking about the "${activeProject.name}" project.**`;
+                        }
                     }
                 }
             } else {
