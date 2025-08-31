@@ -612,9 +612,80 @@ function setupGeminiIpcHandlers(geminiSessionRef) {
                 console.log(`🔍 DEBUG: Available projects:`, Array.from(codeAnalyzer.projects.keys()));
             }
 
-            // Check if there's an active project and enhance message if it's code-related
-            if (activeProject) {
-                console.log(`📁 Active project detected: ${activeProject.name}`);
+            // Smart project detection: Check if user is asking about a specific project by name
+            let targetProject = activeProject;
+            let allProjectsRequested = false;
+            const availableProjects = Array.from(codeAnalyzer.projects.keys());
+            
+            // Check if user is asking about multiple projects
+            const multiProjectKeywords = ['projects', 'tell about your projects', 'all projects', 'both projects'];
+            const messageHasMultiProjectKeywords = multiProjectKeywords.some(keyword => 
+                messageToSend.toLowerCase().includes(keyword)
+            );
+            
+            if (messageHasMultiProjectKeywords && availableProjects.length > 1) {
+                allProjectsRequested = true;
+                console.log(`🎯 Detected request for all projects (${availableProjects.length} available)`);
+            } else {
+                // Look for project names mentioned in the message (case-insensitive and partial matching)
+                for (const projectName of availableProjects) {
+                    const projectNameLower = projectName.toLowerCase();
+                    const messageLower = messageToSend.toLowerCase();
+                    
+                    // Extract key words from project name for flexible matching
+                    const projectWords = projectNameLower.split(/[\s\-_]+/).filter(word => word.length > 2);
+                    
+                    // Check if any significant project words are mentioned in the message
+                    const hasProjectWord = projectWords.some(word => messageLower.includes(word));
+                    
+                    if (hasProjectWord || messageLower.includes(projectNameLower)) {
+                        targetProject = codeAnalyzer.projects.get(projectName);
+                        console.log(`🎯 Detected specific project reference: ${projectName} (matched via: ${projectWords.join(', ')})`);
+                        break;
+                    }
+                }
+            }
+
+            // Check if there's a target project (active or detected) and enhance message if it's code-related
+            if (allProjectsRequested) {
+                console.log('📁 Providing information about all uploaded projects');
+                
+                // Create comprehensive overview of all projects
+                let allProjectsContext = `${text}
+
+**IMPORTANT: You are being asked about ALL uploaded projects. Here are the details for each project:**
+
+`;
+                
+                availableProjects.forEach((projectName, index) => {
+                    const project = codeAnalyzer.projects.get(projectName);
+                    allProjectsContext += `
+**PROJECT ${index + 1}: ${project.name}**
+- **Total Files**: ${project.stats.totalFiles}
+- **Lines of Code**: ${project.stats.totalLines.toLocaleString()}
+- **Functions**: ${project.stats.functionCount}
+- **Classes**: ${project.stats.classCount}
+- **File Types**: ${project.stats.languages.join(', ')}
+
+**Key Files:**
+${project.files.slice(0, 5).map(file => `- **${file.name}** (${file.lines ? file.lines.length : 0} lines)`).join('\n')}
+
+**Functions Found:**
+${project.files.flatMap(file => 
+    file.functions ? file.functions.slice(0, 3).map(func => `- \`${func.name}()\` in ${file.name}`) : []
+).slice(0, 5).join('\n') || '- No functions detected'}
+
+---
+`;
+                });
+                
+                allProjectsContext += `
+Please provide a detailed explanation about EACH of these specific uploaded projects based on the analyzed files and content above, not general information.`;
+
+                messageToSend = allProjectsContext;
+                
+            } else if (targetProject) {
+                console.log(`📁 Using project for context: ${targetProject.name}`);
                 
                 const codeKeywords = [
                     'implementation', 'implement', 'code', 'function', 'class', 'method',
@@ -631,7 +702,8 @@ function setupGeminiIpcHandlers(geminiSessionRef) {
                 const projectKeywords = [
                     'explain', 'describe', 'tell me about', 'what is', 'about your project',
                     'your project', 'this project', 'project does', 'project work',
-                    'overview', 'summary', 'purpose', 'goal', 'objective'
+                    'overview', 'summary', 'purpose', 'goal', 'objective',
+                    'what about', 'about', 'tell about', 'details about'
                 ];
                 
                 const messageHasCodeKeywords = codeKeywords.some(keyword => 
@@ -642,10 +714,11 @@ function setupGeminiIpcHandlers(geminiSessionRef) {
                     messageToSend.toLowerCase().includes(keyword)
                 );
 
-                const isProjectRelated = messageHasCodeKeywords || messageHasProjectKeywords;
+                const isProjectRelated = messageHasCodeKeywords || messageHasProjectKeywords || (targetProject && targetProject !== activeProject);
                 
                 console.log(`🔍 Code keywords detected: ${messageHasCodeKeywords}`);
                 console.log(`🔍 Project keywords detected: ${messageHasProjectKeywords}`);
+                console.log(`🔍 Specific project detected: ${targetProject && targetProject !== activeProject}`);
                 console.log(`📝 Original message: ${messageToSend}`);
                 
                 if (isProjectRelated) {
@@ -671,12 +744,12 @@ function setupGeminiIpcHandlers(geminiSessionRef) {
 ${activeProject.files.map(file => `- **${file.name}** (${file.lines ? file.lines.length : 0} lines)`).join('\n')}
 
 **Functions Found in Project:**
-${activeProject.files.flatMap(file => 
+${targetProject.files.flatMap(file => 
     file.functions ? file.functions.map(func => `- \`${func.name}()\` in ${file.name}`) : []
 ).join('\n') || '- No functions detected'}
 
 **Project Content Summary:**
-${activeProject.files.map(file => {
+${targetProject.files.map(file => {
     if (file.name.endsWith('.md')) {
         return `- **${file.name}**: ${file.content.substring(0, 200)}...`;
     }
@@ -689,7 +762,7 @@ Please provide a detailed explanation about THIS SPECIFIC PROJECT based on the a
                     } else {
                         // For code-specific questions, try to get specific implementations
                         try {
-                            const codeAnswer = await codeAnalyzer.answerCodeQuestion(activeProject.name, messageToSend);
+                            const codeAnswer = await codeAnalyzer.answerCodeQuestion(targetProject.name, messageToSend);
                             
                             console.log(`🎯 Code analysis result: ${codeAnswer.totalMatches} matches found`);
                             
@@ -699,22 +772,22 @@ Please provide a detailed explanation about THIS SPECIFIC PROJECT based on the a
                                 // Enhance the original message with code context
                                 messageToSend = `${text}
 
-**IMPORTANT: I found specific implementations in my analyzed project "${activeProject.name}". Here are the exact locations:**
+**IMPORTANT: I found specific implementations in my analyzed project "${targetProject.name}". Here are the exact locations:**
 
 ${codeAnswer.answer}
 
-Please provide a response based on these specific implementations and file locations from the "${activeProject.name}" project.`;
+Please provide a response based on these specific implementations and file locations from the "${targetProject.name}" project.`;
                             } else {
                                 // Add general project context even if no specific matches
                                 console.log('📊 Adding general project context');
                                 messageToSend = `${text}
 
-**Context: I'm asking about the "${activeProject.name}" project which has been analyzed and contains:**
-- Total Files: ${activeProject.stats.totalFiles}
-- Lines of Code: ${activeProject.stats.totalLines.toLocaleString()}
-- Functions: ${activeProject.stats.functionCount}
-- Classes: ${activeProject.stats.classCount}
-- Technologies: ${activeProject.stats.languages.join(', ')}
+**Context: I'm asking about the "${targetProject.name}" project which has been analyzed and contains:**
+- Total Files: ${targetProject.stats.totalFiles}
+- Lines of Code: ${targetProject.stats.totalLines.toLocaleString()}
+- Functions: ${targetProject.stats.functionCount}
+- Classes: ${targetProject.stats.classCount}
+- Technologies: ${targetProject.stats.languages.join(', ')}
 
 Please answer based on this specific project context, not external knowledge.`;
                             }
@@ -723,7 +796,7 @@ Please answer based on this specific project context, not external knowledge.`;
                             // Still add basic project context
                             messageToSend = `${text}
 
-**Context: I'm asking about the "${activeProject.name}" project.**`;
+**Context: I'm asking about the "${targetProject.name}" project.**`;
                         }
                     }
                 }
