@@ -1,8 +1,8 @@
 {
-    "name": "cheating-daddy",
-    "productName": "cheating-daddy",
+    "name": "mixer",
+    "productName": "Mixer",
     "version": "0.4.0",
-    "description": "cheating daddy",
+    "description": "Mixer - AI Assistant",
     "main": "src/index.js",
     "scripts": {
         "start": "electron-forge start",
@@ -13,11 +13,11 @@
         "test": "vitest run"
     },
     "keywords": [
-        "cheating daddy",
-        "cheating daddy ai",
-        "cheating daddy ai assistant",
-        "cheating daddy ai assistant for interviews",
-        "cheating daddy ai assistant for interviews"
+        "mixer",
+        "mixer ai",
+        "mixer ai assistant",
+        "mixer ai assistant for interviews",
+        "mixer ai assistant for meetings"
     ],
     "author": {
         "name": "sohzm",

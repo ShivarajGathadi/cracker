@@ -1,4 +1,4 @@
-# Cheating Daddy - Complete Technical Documentation
+# Mixer - Complete Technical Documentation
 
 ## 📋 Table of Contents
 1. [Project Overview](#project-overview)
@@ -18,7 +18,7 @@
 
 ## 📈 Project Overview
 
-**Cheating Daddy** is a sophisticated real-time AI assistant application built with Electron that provides contextual help during video calls, interviews, and meetings. It uses advanced screen capture, system audio recording, and AI processing to deliver intelligent responses while maintaining complete stealth from detection systems.
+**Mixer** is a sophisticated real-time AI assistant application built with Electron that provides contextual help during video calls, interviews, and meetings. It uses advanced screen capture, system audio recording, and AI processing to deliver intelligent responses while maintaining complete stealth from detection systems.
 
 ### 🎯 Core Purpose
 - **Real-time AI assistance** during live conversations
@@ -328,11 +328,11 @@ if (isMacOS) {
 function getConfigDir() {
     const platform = os.platform();
     if (platform === 'win32') {
-        return path.join(os.homedir(), 'AppData', 'Roaming', 'cheating-daddy-config');
+        return path.join(os.homedir(), 'AppData', 'Roaming', 'mixer-config');
     } else if (platform === 'darwin') {
-        return path.join(os.homedir(), 'Library', 'Application Support', 'cheating-daddy-config');
+        return path.join(os.homedir(), 'Library', 'Application Support', 'mixer-config');
     } else {
-        return path.join(os.homedir(), '.config', 'cheating-daddy-config');
+        return path.join(os.homedir(), '.config', 'mixer-config');
     }
 }
 ```
@@ -377,7 +377,7 @@ module.exports = {
     packagerConfig: {
         asar: true,                              // Archive app source
         extraResource: ['./src/assets/SystemAudioDump'], // Include binaries
-        name: 'Cheating Daddy',
+        name: 'Mixer',
         icon: 'src/assets/logo'                  // App icon
     },
     makers: [
@@ -411,22 +411,22 @@ new FusesPlugin({
 #### **Windows**
 ```
 out/make/squirrel.windows/x64/
-├── Cheating Daddy-0.4.0 Setup.exe    # Main installer
-├── cheating-daddy-0.4.0-full.nupkg   # NuGet package
+├── Mixer-0.4.0 Setup.exe    # Main installer
+├── mixer-0.4.0-full.nupkg   # NuGet package
 └── RELEASES                           # Update metadata
 ```
 
 #### **macOS**
 ```
 out/make/
-├── Cheating Daddy-0.4.0.dmg          # Disk image installer
+├── Mixer-0.4.0.dmg          # Disk image installer
 └── darwin-x64/                       # Application bundle
 ```
 
 #### **Linux**
 ```
 out/make/
-├── Cheating Daddy-0.4.0.AppImage     # Portable application
+├── Mixer-0.4.0.AppImage     # Portable application
 └── linux-x64/                        # Application directory
 ```
 
@@ -687,7 +687,7 @@ if (process.platform === 'linux') {
     
     // Desktop file creation
     const desktopEntry = `[Desktop Entry]
-Name=Cheating Daddy
+Name=Mixer
 Exec=${process.execPath}
 Icon=${iconPath}
 Type=Application
@@ -861,6 +861,6 @@ jobs:
 
 ---
 
-This comprehensive documentation provides you with the complete technical blueprint of the **Cheating Daddy** application. You can use these patterns, architectures, and implementations as a foundation for building similar cross-platform desktop applications with advanced audio/video processing, AI integration, and stealth capabilities.
+This comprehensive documentation provides you with the complete technical blueprint of the **Mixer** application. You can use these patterns, architectures, and implementations as a foundation for building similar cross-platform desktop applications with advanced audio/video processing, AI integration, and stealth capabilities.
 
 The key architectural decisions, security measures, and cross-platform compatibility strategies documented here will serve as valuable reference material for your future projects requiring sophisticated desktop application development.
