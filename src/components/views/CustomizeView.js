@@ -496,6 +496,11 @@ export class CustomizeView extends LitElement {
                 name: 'Online Assessment',
                 description: 'Coding interview assistant for top MNC assessments',
             },
+            {
+                value: 'coding',
+                name: 'Technical Interview',
+                description: 'Live coding interview with spoken explanations for interviewers',
+            },
         ];
     }
 
@@ -543,6 +548,7 @@ export class CustomizeView extends LitElement {
             negotiation: 'Negotiation',
             exam: 'Exam Assistant',
             oa: 'Online Assessment',
+            coding: 'Technical Interview',
         };
     }
 

@@ -324,6 +324,7 @@ export class AssistantView extends LitElement {
             negotiation: 'Negotiation',
             exam: 'Exam Assistant',
             oa: 'Online Assessment',
+            coding: 'Technical Interview',
         };
     }
 

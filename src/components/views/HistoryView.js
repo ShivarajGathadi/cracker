@@ -408,6 +408,8 @@ export class HistoryView extends LitElement {
             presentation: 'Presentation',
             negotiation: 'Negotiation',
             exam: 'Exam Assistant',
+            oa: 'Online Assessment',
+            coding: 'Technical Interview',
         };
     }
 
