@@ -621,7 +621,12 @@ function setupGeminiIpcHandlers(geminiSessionRef) {
             const availableProjects = Array.from(codeAnalyzer.projects.keys());
             
             // Check if user is asking about multiple projects
-            const multiProjectKeywords = ['projects', 'tell about your projects', 'all projects', 'both projects'];
+            const multiProjectKeywords = [
+                'projects', 'tell about your projects', 'all projects', 'both projects',
+                'explain about your projects', 'tell me about your projects', 'what projects',
+                'your projects', 'about your projects', 'explain your projects',
+                'walk me through your projects', 'describe your projects', 'what about other projects'
+            ];
             const messageHasMultiProjectKeywords = multiProjectKeywords.some(keyword => 
                 messageToSend.toLowerCase().includes(keyword)
             );
@@ -665,10 +670,31 @@ function setupGeminiIpcHandlers(geminiSessionRef) {
                     }
                 }
                 
-                // If no specific project detected, use all active projects
-                if (!specificProjectDetected && activeProjects.size > 0) {
-                    targetProjects = Array.from(activeProjects).map(name => codeAnalyzer.projects.get(name));
-                    console.log(`Using all active projects: [${Array.from(activeProjects).join(', ')}]`);
+                // If no specific project detected, but message contains project-related terms, use all projects
+                if (!specificProjectDetected) {
+                    // Check if message contains general project inquiry keywords
+                    const generalProjectKeywords = [
+                        'project', 'explain', 'describe', 'tell about', 'about your',
+                        'what is', 'summary', 'overview', 'details', 'work on'
+                    ];
+                    
+                    const hasProjectTerm = generalProjectKeywords.some(keyword => 
+                        messageToSend.toLowerCase().includes(keyword)
+                    );
+                    
+                    if (hasProjectTerm && availableProjects.length > 0) {
+                        // If only one project available, use it; otherwise use all
+                        if (availableProjects.length === 1) {
+                            targetProjects = [codeAnalyzer.projects.get(availableProjects[0])];
+                            console.log(`Using single available project: ${availableProjects[0]}`);
+                        } else if (activeProjects.size > 0) {
+                            targetProjects = Array.from(activeProjects).map(name => codeAnalyzer.projects.get(name));
+                            console.log(`Using all active projects: [${Array.from(activeProjects).join(', ')}]`);
+                        }
+                    } else if (activeProjects.size > 0) {
+                        targetProjects = Array.from(activeProjects).map(name => codeAnalyzer.projects.get(name));
+                        console.log(`Using all active projects as fallback: [${Array.from(activeProjects).join(', ')}]`);
+                    }
                 }
             }
 
@@ -731,7 +757,11 @@ Please provide a detailed explanation about EACH of these specific uploaded proj
                     'explain', 'describe', 'tell me about', 'what is', 'about your project',
                     'your project', 'this project', 'project does', 'project work',
                     'overview', 'summary', 'purpose', 'goal', 'objective',
-                    'what about', 'about', 'tell about', 'details about'
+                    'what about', 'about', 'tell about', 'details about',
+                    'walk me through', 'walk through', 'can you explain', 'explain about',
+                    'tell about', 'what does this project', 'how does this project',
+                    'project overview', 'project summary', 'project description',
+                    'project details', 'about the project', 'regarding the project'
                 ];
                 
                 const messageHasCodeKeywords = codeKeywords.some(keyword => 

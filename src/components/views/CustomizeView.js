@@ -491,6 +491,16 @@ export class CustomizeView extends LitElement {
                 name: 'Exam Assistant',
                 description: 'Academic assistance for test-taking and exam questions',
             },
+            {
+                value: 'coding',
+                name: 'Coding Interview',
+                description: 'Technical interview assistance for coding problems and algorithms',
+            },
+            {
+                value: 'oa',
+                name: 'Online Assessment',
+                description: 'Online coding assessment support for technical evaluations',
+            },
         ];
     }
 
@@ -537,6 +547,8 @@ export class CustomizeView extends LitElement {
             presentation: 'Presentation',
             negotiation: 'Negotiation',
             exam: 'Exam Assistant',
+            coding: 'Coding Interview',
+            oa: 'Online Assessment',
         };
     }
 
