@@ -127,6 +127,66 @@ export class AssistantView extends LitElement {
             border-radius: 0;
         }
 
+        /* Highlight.js integration styles for colorful syntax highlighting */
+        .response-container .hljs {
+            color: var(--text-color) !important;
+            background: transparent !important;
+            display: block;
+            overflow-x: auto;
+        }
+
+        .response-container pre .hljs {
+            padding: 0;
+        }
+
+        .response-container code.hljs {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 0.2em 0.4em;
+            border-radius: 3px;
+            display: inline;
+        }
+
+        /* Ensure highlight.js colors are visible */
+        .response-container .hljs-keyword,
+        .response-container .hljs-selector-tag,
+        .response-container .hljs-literal,
+        .response-container .hljs-section,
+        .response-container .hljs-link {
+            color: #569cd6 !important; /* Blue for keywords */
+        }
+
+        .response-container .hljs-comment {
+            color: #6a9955 !important; /* Green for comments */
+        }
+
+        .response-container .hljs-string,
+        .response-container .hljs-attr {
+            color: #ce9178 !important; /* Orange for strings */
+        }
+
+        .response-container .hljs-number {
+            color: #b5cea8 !important; /* Light green for numbers */
+        }
+
+        .response-container .hljs-built_in,
+        .response-container .hljs-builtin-name {
+            color: #4ec9b0 !important; /* Cyan for built-ins */
+        }
+
+        .response-container .hljs-variable,
+        .response-container .hljs-template-variable {
+            color: #9cdcfe !important; /* Light blue for variables */
+        }
+
+        .response-container .hljs-type,
+        .response-container .hljs-class {
+            color: #4ec9b0 !important; /* Cyan for types */
+        }
+
+        .response-container .hljs-function {
+            color: #dcdcaa !important; /* Yellow for functions */
+        }
+
         .response-container a {
             color: var(--link-color);
             text-decoration: none;
@@ -357,10 +417,52 @@ export class AssistantView extends LitElement {
         return content; // Fallback if marked is not available
     }
 
+    applySyntaxHighlighting(container) {
+        // Apply syntax highlighting to code blocks using highlight.js
+        if (typeof window !== 'undefined' && window.hljs) {
+            try {
+                // Find all code blocks and apply highlighting
+                const codeBlocks = container.querySelectorAll('pre code, code[class*="language-"]');
+                codeBlocks.forEach(block => {
+                    // Skip if already highlighted
+                    if (!block.classList.contains('hljs')) {
+                        window.hljs.highlightElement(block);
+                    }
+                });
+                
+                // Auto-highlight inline code that looks like programming code
+                const inlineCodeBlocks = container.querySelectorAll('code:not([class*="language-"]):not(.hljs):not(pre code)');
+                inlineCodeBlocks.forEach(block => {
+                    const text = block.textContent.trim();
+                    // Apply highlighting to code that contains programming syntax
+                    if (text.length > 3 && (
+                        text.includes('(') || text.includes('{') || text.includes('[') ||
+                        text.includes('function') || text.includes('const') || text.includes('let') || 
+                        text.includes('var') || text.includes('class') || text.includes('def') || 
+                        text.includes('import') || text.includes('if') || text.includes('for') || 
+                        text.includes('while') || text.includes('=') || text.includes(';')
+                    )) {
+                        try {
+                            window.hljs.highlightElement(block);
+                        } catch (err) {
+                            // Ignore errors for blocks that can't be highlighted
+                        }
+                    }
+                });
+                
+                console.log('Syntax highlighting applied successfully');
+            } catch (error) {
+                console.warn('Error applying syntax highlighting:', error);
+            }
+        } else {
+            console.log('Highlight.js not available, skipping syntax highlighting');
+        }
+    }
+
     wrapWordsInSpans(html) {
         const parser = new DOMParser();
         const doc = parser.parseFromString(html, 'text/html');
-        const tagsToSkip = ['PRE'];
+        const tagsToSkip = ['PRE', 'CODE'];
 
         function wrap(node) {
             if (node.nodeType === Node.TEXT_NODE && node.textContent.trim() && !tagsToSkip.includes(node.parentNode.tagName)) {
@@ -567,6 +669,10 @@ export class AssistantView extends LitElement {
             const renderedResponse = this.renderMarkdown(currentResponse);
             console.log('Rendered response:', renderedResponse);
             container.innerHTML = renderedResponse;
+            
+            // Apply syntax highlighting to code blocks
+            this.applySyntaxHighlighting(container);
+            
             const words = container.querySelectorAll('[data-word]');
             if (this.shouldAnimateResponse) {
                 for (let i = 0; i < this._lastAnimatedWordCount && i < words.length; i++) {
