@@ -787,6 +787,113 @@ async function handleSmartResponse() {
     }
 }
 
+// Project Management Functions
+function saveProjectsData(projects) {
+    try {
+        localStorage.setItem('userProjects', JSON.stringify(projects));
+        return true;
+    } catch (error) {
+        console.error('Error saving projects data:', error);
+        return false;
+    }
+}
+
+function getProjectsData() {
+    try {
+        const projectsData = localStorage.getItem('userProjects');
+        return projectsData ? JSON.parse(projectsData) : [];
+    } catch (error) {
+        console.error('Error loading projects data:', error);
+        return [];
+    }
+}
+
+function addProject(project) {
+    const projects = getProjectsData();
+    project.id = Date.now().toString(); // Simple ID generation
+    project.createdAt = new Date().toISOString();
+    projects.push(project);
+    return saveProjectsData(projects);
+}
+
+function updateProject(projectId, updatedProject) {
+    const projects = getProjectsData();
+    const index = projects.findIndex(p => p.id === projectId);
+    if (index !== -1) {
+        projects[index] = { ...projects[index], ...updatedProject, updatedAt: new Date().toISOString() };
+        return saveProjectsData(projects);
+    }
+    return false;
+}
+
+function deleteProject(projectId) {
+    const projects = getProjectsData();
+    const filteredProjects = projects.filter(p => p.id !== projectId);
+    return saveProjectsData(filteredProjects);
+}
+
+function getProjectByName(projectName) {
+    const projects = getProjectsData();
+    return projects.find(project => 
+        project.name.toLowerCase().includes(projectName.toLowerCase()) ||
+        projectName.toLowerCase().includes(project.name.toLowerCase())
+    );
+}
+
+function formatProjectsForAI() {
+    const projects = getProjectsData();
+    if (projects.length === 0) {
+        return '';
+    }
+
+    let formattedProjects = '\n\n=== MY PROJECTS INFORMATION ===\n\n';
+    
+    projects.forEach((project, index) => {
+        formattedProjects += `PROJECT ${index + 1}: ${project.name}\n`;
+        formattedProjects += `Overview: ${project.overview}\n`;
+        formattedProjects += `Technologies: ${project.technologies}\n`;
+        formattedProjects += `My Role: ${project.role}\n`;
+        formattedProjects += `Key Features: ${project.features}\n`;
+        formattedProjects += `Challenges & Solutions: ${project.challenges}\n`;
+        formattedProjects += `Achievements: ${project.achievements}\n`;
+        if (project.metrics) formattedProjects += `Impact/Metrics: ${project.metrics}\n`;
+        if (project.teamSize) formattedProjects += `Team Size: ${project.teamSize}\n`;
+        if (project.duration) formattedProjects += `Duration: ${project.duration}\n`;
+        formattedProjects += '---\n\n';
+    });
+    
+    return formattedProjects;
+}
+
+function formatSpecificProjectForAI(projectName) {
+    const project = getProjectByName(projectName);
+    if (!project) {
+        return '';
+    }
+
+    let formattedProject = `\n\n=== ${project.name.toUpperCase()} PROJECT DETAILS ===\n\n`;
+    formattedProject += `Project Overview: ${project.overview}\n\n`;
+    formattedProject += `Technologies Used: ${project.technologies}\n\n`;
+    formattedProject += `My Role & Responsibilities: ${project.role}\n\n`;
+    formattedProject += `Key Features & Functionality:\n${project.features}\n\n`;
+    formattedProject += `Technical Challenges & Solutions:\n${project.challenges}\n\n`;
+    formattedProject += `Key Achievements & Results:\n${project.achievements}\n\n`;
+    
+    if (project.metrics) {
+        formattedProject += `Impact & Metrics: ${project.metrics}\n\n`;
+    }
+    
+    if (project.teamSize) {
+        formattedProject += `Team Collaboration: ${project.teamSize}\n\n`;
+    }
+    
+    if (project.duration) {
+        formattedProject += `Project Timeline: ${project.duration}\n\n`;
+    }
+    
+    return formattedProject;
+}
+
 // Create reference to the main app element
 const cheatingDaddyApp = document.querySelector('cheating-daddy-app');
 
@@ -811,6 +918,16 @@ const cheddar = {
     sendTextMessage,
     handleShortcut,
     handleSmartResponse,
+
+    // Project management functions
+    saveProjectsData,
+    getProjectsData,
+    addProject,
+    updateProject,
+    deleteProject,
+    getProjectByName,
+    formatProjectsForAI,
+    formatSpecificProjectForAI,
 
     // Conversation history functions
     getAllConversationSessions,

@@ -163,6 +163,90 @@ async function getStoredSetting(key, defaultValue) {
     return defaultValue;
 }
 
+// Get projects context from renderer
+function getProjectsContext() {
+    try {
+        // Try to access the renderer's project functions
+        const windows = BrowserWindow.getAllWindows();
+        if (windows.length > 0) {
+            // We'll get the projects context from the main process side
+            // For now, return empty string and we'll handle this in the smart response
+            return '';
+        }
+        return '';
+    } catch (error) {
+        console.error('Error getting projects context:', error);
+        return '';
+    }
+}
+
+// Detect if the question is about projects
+function detectProjectQuestion(question) {
+    if (!question || typeof question !== 'string') return false;
+    
+    const projectKeywords = [
+        'project', 'projects', 'built', 'developed', 'created', 'worked on',
+        'tell me about', 'describe', 'explain', 'walk me through',
+        'experience with', 'portfolio', 'github', 'repository',
+        'what have you made', 'what did you build', 'show me',
+        'technical', 'coding', 'programming', 'development',
+        'contentpulse', 'sentiment analysis', 'nlp', 'ai project'
+    ];
+    
+    const lowerQuestion = question.toLowerCase();
+    return projectKeywords.some(keyword => lowerQuestion.includes(keyword.toLowerCase()));
+}
+
+// Get project context based on the question
+async function getProjectsContextForQuestion(question) {
+    try {
+        // Request project data from renderer process
+        const windows = BrowserWindow.getAllWindows();
+        if (windows.length > 0) {
+            const result = await windows[0].webContents.executeJavaScript(`
+                (function() {
+                    try {
+                        if (typeof cheddar === 'undefined' || !cheddar.getProjectsData) {
+                            console.log('cheddar or getProjectsData not available');
+                            return '';
+                        }
+                        
+                        const projects = cheddar.getProjectsData();
+                        if (!projects || projects.length === 0) {
+                            return '';
+                        }
+                        
+                        const questionLower = "${question.toLowerCase()}";
+                        
+                        // Try to find a specific project mentioned in the question
+                        const specificProject = projects.find(project => 
+                            questionLower.includes(project.name.toLowerCase()) ||
+                            project.name.toLowerCase().includes(questionLower.split(' ').find(word => word.length > 3) || '')
+                        );
+                        
+                        if (specificProject) {
+                            // Return specific project context
+                            return cheddar.formatSpecificProjectForAI(specificProject.name);
+                        } else {
+                            // Return all projects context
+                            return cheddar.formatProjectsForAI();
+                        }
+                    } catch (e) {
+                        console.error('Error getting projects context:', e);
+                        return '';
+                    }
+                })()
+            `);
+            
+            return result || '';
+        }
+        return '';
+    } catch (error) {
+        console.error('Error getting projects context for question:', error);
+        return '';
+    }
+}
+
 async function attemptReconnection() {
     if (!lastSessionParams || reconnectionAttempts >= maxReconnectionAttempts) {
         console.log('Max reconnection attempts reached or no session params stored');
@@ -238,7 +322,10 @@ async function initializeGeminiSession(apiKey, customPrompt = '', profile = 'int
     const enabledTools = await getEnabledTools();
     const googleSearchEnabled = enabledTools.some(tool => tool.googleSearch);
 
-    const systemPrompt = getSystemPrompt(profile, customPrompt, googleSearchEnabled);
+    // Get projects context for system prompt
+    const projectsContext = getProjectsContext();
+
+    const systemPrompt = getSystemPrompt(profile, customPrompt, googleSearchEnabled, projectsContext);
 
     // Initialize new conversation session (only if not reconnecting)
     if (!isReconnection) {
@@ -722,20 +809,32 @@ function setupGeminiIpcHandlers(geminiSessionRef) {
             let contextPrompt = '';
             let responseType = 'screenshot'; // default
 
+            // Detect project-related questions in voice input
+            const hasProjectQuestion = isVoiceRecent && detectProjectQuestion(recentVoiceQuestion);
+            const projectsContext = hasProjectQuestion ? await getProjectsContextForQuestion(recentVoiceQuestion) : '';
+
             // Smart decision logic
             if (isVoiceRecent && hasScreenshotContext) {
                 // Both contexts available - decide based on recency and relevance
                 if (voiceAge < 10000) { // Voice question is very recent (< 10 seconds)
-                    responseType = 'voice';
-                    contextPrompt = `Recent interview question: ${recentVoiceQuestion}\n\nPlease provide a helpful answer to this interview question.`;
+                    responseType = hasProjectQuestion ? 'project-voice' : 'voice';
+                    if (hasProjectQuestion) {
+                        contextPrompt = `Recent interview question: ${recentVoiceQuestion}\n\n${projectsContext}\n\nPlease provide a detailed answer about my project(s) based on the information above.`;
+                    } else {
+                        contextPrompt = `Recent interview question: ${recentVoiceQuestion}\n\nPlease provide a helpful answer to this interview question.`;
+                    }
                 } else {
                     responseType = 'mixed';
                     contextPrompt = `Recent interview question: ${recentVoiceQuestion}\n\nAlso analyze the current screenshot and provide the most relevant response. If the screen shows related content, incorporate it into your answer.`;
                 }
             } else if (isVoiceRecent) {
                 // Only voice context
-                responseType = 'voice';
-                contextPrompt = `Recent interview question: ${recentVoiceQuestion}\n\nPlease provide a helpful answer to this interview question.`;
+                responseType = hasProjectQuestion ? 'project-voice' : 'voice';
+                if (hasProjectQuestion) {
+                    contextPrompt = `Recent interview question: ${recentVoiceQuestion}\n\n${projectsContext}\n\nPlease provide a detailed answer about my project(s) based on the information above.`;
+                } else {
+                    contextPrompt = `Recent interview question: ${recentVoiceQuestion}\n\nPlease provide a helpful answer to this interview question.`;
+                }
             } else if (hasScreenshotContext) {
                 // Only screenshot context
                 responseType = 'screenshot';
@@ -810,6 +909,8 @@ module.exports = {
     setupGeminiIpcHandlers,
     attemptReconnection,
     formatSpeakerResults,
+    detectProjectQuestion,
+    getProjectsContextForQuestion,
     // Export voice question tracking for external access if needed
     getRecentVoiceQuestion: () => ({
         question: recentVoiceQuestion,

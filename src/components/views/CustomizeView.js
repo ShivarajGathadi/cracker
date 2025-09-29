@@ -396,6 +396,104 @@ export class CustomizeView extends LitElement {
             font-size: 10px;
             color: var(--description-color, rgba(255, 255, 255, 0.5));
         }
+
+        /* Project Management Styles */
+        .projects-list {
+            display: grid;
+            gap: 8px;
+            margin-top: 8px;
+        }
+
+        .project-item {
+            background: var(--input-background, rgba(0, 0, 0, 0.3));
+            border: 1px solid var(--input-border, rgba(255, 255, 255, 0.15));
+            border-radius: 4px;
+            padding: 12px;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 12px;
+        }
+
+        .project-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .project-name {
+            font-weight: 600;
+            font-size: 13px;
+            color: var(--text-color);
+            margin-bottom: 4px;
+        }
+
+        .project-summary {
+            font-size: 11px;
+            color: var(--description-color, rgba(255, 255, 255, 0.6));
+            line-height: 1.3;
+            overflow: hidden;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+        }
+
+        .project-actions {
+            display: flex;
+            gap: 6px;
+            flex-shrink: 0;
+        }
+
+        .project-action-btn {
+            background: var(--button-background, rgba(255, 255, 255, 0.1));
+            border: 1px solid var(--button-border, rgba(255, 255, 255, 0.2));
+            color: var(--text-color);
+            padding: 4px 8px;
+            border-radius: 3px;
+            font-size: 10px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .project-action-btn:hover {
+            background: var(--button-hover-background, rgba(255, 255, 255, 0.15));
+        }
+
+        .project-action-btn.delete:hover {
+            background: var(--danger-color, #ef4444);
+            border-color: var(--danger-color, #ef4444);
+        }
+
+        .project-form {
+            background: var(--input-background, rgba(0, 0, 0, 0.3));
+            border: 1px solid var(--input-border, rgba(255, 255, 255, 0.15));
+            border-radius: 4px;
+            padding: 16px;
+            margin-top: 8px;
+        }
+
+        .project-form-grid {
+            display: grid;
+            gap: 12px;
+        }
+
+        .project-form textarea {
+            min-height: 60px;
+            resize: vertical;
+        }
+
+        .project-form-actions {
+            display: flex;
+            gap: 8px;
+            justify-content: flex-end;
+            margin-top: 12px;
+        }
+
+        .empty-projects {
+            text-align: center;
+            padding: 24px;
+            color: var(--description-color, rgba(255, 255, 255, 0.5));
+            font-size: 12px;
+        }
     `;
 
     static properties = {
@@ -415,6 +513,10 @@ export class CustomizeView extends LitElement {
         onLayoutModeChange: { type: Function },
         advancedMode: { type: Boolean },
         onAdvancedModeChange: { type: Function },
+        // Project management properties
+        projects: { type: Array },
+        showProjectForm: { type: Boolean },
+        editingProject: { type: Object },
     };
 
     constructor() {
@@ -443,6 +545,11 @@ export class CustomizeView extends LitElement {
 
         // Font size default (in pixels)
         this.fontSize = 20;
+
+        // Project management initialization
+        this.projects = [];
+        this.showProjectForm = false;
+        this.editingProject = null;
 
         this.loadKeybinds();
         this.loadGoogleSearchSettings();
@@ -868,6 +975,162 @@ export class CustomizeView extends LitElement {
         root.style.setProperty('--response-font-size', `${this.fontSize}px`);
     }
 
+    // Project Management Methods
+    connectedCallback() {
+        super.connectedCallback();
+        this.loadProjects();
+    }
+
+    loadProjects() {
+        this.projects = window.cheddar.getProjectsData();
+        this.requestUpdate();
+    }
+
+    handleAddProject() {
+        this.editingProject = null;
+        this.showProjectForm = true;
+        this.requestUpdate();
+    }
+
+    handleEditProject(project) {
+        this.editingProject = project;
+        this.showProjectForm = true;
+        this.requestUpdate();
+    }
+
+    handleDeleteProject(projectId) {
+        if (confirm('Are you sure you want to delete this project?')) {
+            window.cheddar.deleteProject(projectId);
+            this.loadProjects();
+        }
+    }
+
+    handleCancelProjectForm() {
+        this.showProjectForm = false;
+        this.editingProject = null;
+        this.requestUpdate();
+    }
+
+    handleSaveProject(e) {
+        e.preventDefault();
+        const formData = new FormData(e.target);
+        
+        const projectData = {
+            name: formData.get('name'),
+            overview: formData.get('overview'),
+            technologies: formData.get('technologies'),
+            role: formData.get('role'),
+            features: formData.get('features'),
+            challenges: formData.get('challenges'),
+            achievements: formData.get('achievements'),
+            metrics: formData.get('metrics'),
+            teamSize: formData.get('teamSize'),
+            duration: formData.get('duration')
+        };
+
+        let success = false;
+        if (this.editingProject) {
+            success = window.cheddar.updateProject(this.editingProject.id, projectData);
+        } else {
+            success = window.cheddar.addProject(projectData);
+        }
+
+        if (success) {
+            this.showProjectForm = false;
+            this.editingProject = null;
+            this.loadProjects();
+        } else {
+            alert('Error saving project. Please try again.');
+        }
+    }
+
+    renderProjectForm() {
+        const project = this.editingProject || {};
+        
+        return html`
+            <div class="project-form">
+                <div class="section-title" style="margin-bottom: 12px;">
+                    ${this.editingProject ? 'Edit Project' : 'Add New Project'}
+                </div>
+                
+                <form @submit=${this.handleSaveProject}>
+                    <div class="project-form-grid">
+                        <div class="form-group">
+                            <label class="form-label">Project Name *</label>
+                            <input class="form-control" name="name" .value=${project.name || ''} required
+                                   placeholder="e.g., ContentPulse AI Analyzer" />
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Technologies Used *</label>
+                            <input class="form-control" name="technologies" .value=${project.technologies || ''} required
+                                   placeholder="e.g., Python, NLTK, BeautifulSoup, pandas" />
+                        </div>
+
+                        <div class="form-group full-width">
+                            <label class="form-label">Project Overview *</label>
+                            <textarea class="form-control" name="overview" .value=${project.overview || ''} required rows="3"
+                                      placeholder="Brief description of what the project does and its purpose"></textarea>
+                        </div>
+
+                        <div class="form-group full-width">
+                            <label class="form-label">Your Role & Responsibilities *</label>
+                            <textarea class="form-control" name="role" .value=${project.role || ''} required rows="3"
+                                      placeholder="Describe your specific role and what you were responsible for"></textarea>
+                        </div>
+
+                        <div class="form-group full-width">
+                            <label class="form-label">Key Features & Functionality *</label>
+                            <textarea class="form-control" name="features" .value=${project.features || ''} required rows="3"
+                                      placeholder="List the main features and capabilities of the project"></textarea>
+                        </div>
+
+                        <div class="form-group full-width">
+                            <label class="form-label">Technical Challenges & Solutions *</label>
+                            <textarea class="form-control" name="challenges" .value=${project.challenges || ''} required rows="3"
+                                      placeholder="Describe key challenges faced and how you solved them"></textarea>
+                        </div>
+
+                        <div class="form-group full-width">
+                            <label class="form-label">Key Achievements & Results *</label>
+                            <textarea class="form-control" name="achievements" .value=${project.achievements || ''} required rows="3"
+                                      placeholder="Highlight the outcomes, impact, or success metrics"></textarea>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Impact & Metrics (Optional)</label>
+                            <input class="form-control" name="metrics" .value=${project.metrics || ''}
+                                   placeholder="e.g., 95% accuracy, 1000+ users" />
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Team Size (Optional)</label>
+                            <input class="form-control" name="teamSize" .value=${project.teamSize || ''}
+                                   placeholder="e.g., Solo project, 4-person team" />
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Duration (Optional)</label>
+                            <input class="form-control" name="duration" .value=${project.duration || ''}
+                                   placeholder="e.g., 3 months, 6 weeks" />
+                        </div>
+                    </div>
+
+                    <div class="project-form-actions">
+                        <button type="button" class="form-control" @click=${this.handleCancelProjectForm}
+                                style="background: var(--input-background); max-width: 100px;">
+                            Cancel
+                        </button>
+                        <button type="submit" class="form-control"
+                                style="background: var(--accent-color, #007aff); color: white; max-width: 100px;">
+                            ${this.editingProject ? 'Update' : 'Save'}
+                        </button>
+                    </div>
+                </form>
+            </div>
+        `;
+    }
+
     render() {
         const profiles = this.getProfiles();
         const languages = this.getLanguages();
@@ -919,6 +1182,53 @@ export class CustomizeView extends LitElement {
                 </div>
                 </div>
             </div>
+        </div>
+
+        <!-- Projects Section -->
+        <div class="settings-section">
+            <div class="section-title">
+                <span>My Projects</span>
+            </div>
+            
+            <div class="form-description" style="margin-bottom: 12px;">
+                Add information about your projects to help the AI provide more accurate answers during interviews when asked about your work.
+            </div>
+
+            ${this.showProjectForm ? this.renderProjectForm() : html`
+                <div class="form-grid">
+                    <button class="form-control" @click=${this.handleAddProject} 
+                            style="background: var(--accent-color, #007aff); color: white; padding: 8px 12px;">
+                        + Add New Project
+                    </button>
+                </div>
+            `}
+
+            ${this.projects.length > 0 ? html`
+                <div class="projects-list">
+                    ${this.projects.map(project => html`
+                        <div class="project-item">
+                            <div class="project-info">
+                                <div class="project-name">${project.name}</div>
+                                <div class="project-summary">
+                                    ${project.technologies} • ${project.overview.substring(0, 100)}${project.overview.length > 100 ? '...' : ''}
+                                </div>
+                            </div>
+                            <div class="project-actions">
+                                <button class="project-action-btn" @click=${() => this.handleEditProject(project)}>
+                                    Edit
+                                </button>
+                                <button class="project-action-btn delete" @click=${() => this.handleDeleteProject(project.id)}>
+                                    Delete
+                                </button>
+                            </div>
+                        </div>
+                    `)}
+                </div>
+            ` : !this.showProjectForm ? html`
+                <div class="empty-projects">
+                    No projects added yet. Add your first project to help the AI provide better interview answers.
+                </div>
+            ` : ''}
         </div>
 
                 <!-- Audio & Microphone Section -->
