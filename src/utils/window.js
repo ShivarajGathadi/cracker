@@ -154,6 +154,7 @@ function getDefaultKeybinds() {
         scrollUp: isMac ? 'Cmd+Shift+Up' : 'Ctrl+Shift+Up',
         scrollDown: isMac ? 'Cmd+Shift+Down' : 'Ctrl+Shift+Down',
         emergencyErase: isMac ? 'Cmd+Shift+E' : 'Ctrl+Shift+E',
+        focusChat: isMac ? 'Cmd+`' : 'Ctrl+`',
     };
 }
 
@@ -340,6 +341,28 @@ function updateGlobalShortcuts(keybinds, mainWindow, sendToRenderer, geminiSessi
             console.log(`Registered emergencyErase: ${keybinds.emergencyErase}`);
         } catch (error) {
             console.error(`Failed to register emergencyErase (${keybinds.emergencyErase}):`, error);
+        }
+    }
+
+    // Register focus chat shortcut
+    if (keybinds.focusChat) {
+        try {
+            globalShortcut.register(keybinds.focusChat, () => {
+                console.log('Focus Chat shortcut triggered');
+                if (mainWindow && !mainWindow.isDestroyed()) {
+                    // Make sure window is visible
+                    if (!mainWindow.isVisible()) {
+                        mainWindow.show();
+                    }
+                    // Bring window to front
+                    mainWindow.focus();
+                    // Send signal to renderer to focus chat input
+                    sendToRenderer('focus-chat-input');
+                }
+            });
+            console.log(`Registered focusChat: ${keybinds.focusChat}`);
+        } catch (error) {
+            console.error(`Failed to register focusChat (${keybinds.focusChat}):`, error);
         }
     }
 }

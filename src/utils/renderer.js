@@ -727,6 +727,60 @@ ipcRenderer.on('clear-sensitive-data', () => {
     // Consider clearing IndexedDB as well for full erasure
 });
 
+// Listen for focus chat input command
+ipcRenderer.on('focus-chat-input', () => {
+    console.log('Focusing chat input...');
+    
+    function attemptFocus(retries = 3) {
+        // Try to find the chat input through the shadow DOM
+        const app = document.querySelector('cheating-daddy-app');
+        if (app && app.shadowRoot) {
+            const assistantView = app.shadowRoot.querySelector('assistant-view');
+            if (assistantView && assistantView.shadowRoot) {
+                const textInput = assistantView.shadowRoot.querySelector('#textInput');
+                if (textInput) {
+                    // Ensure the input is focusable and visible
+                    textInput.tabIndex = 0;
+                    textInput.style.pointerEvents = 'auto';
+                    
+                    // Force focus with a small delay to ensure rendering
+                    setTimeout(() => {
+                        textInput.focus();
+                        textInput.click(); // Simulate click to ensure it's activated
+                        console.log('Chat input focused successfully');
+                    }, 10);
+                    return true;
+                }
+            }
+        }
+        
+        // Fallback: try direct query
+        const textInput = document.getElementById('textInput');
+        if (textInput) {
+            textInput.tabIndex = 0;
+            textInput.style.pointerEvents = 'auto';
+            setTimeout(() => {
+                textInput.focus();
+                textInput.click();
+                console.log('Chat input focused successfully (fallback)');
+            }, 10);
+            return true;
+        }
+        
+        // If not found and we have retries left, try again
+        if (retries > 0) {
+            console.log(`Chat input not found, retrying... (${retries} attempts left)`);
+            setTimeout(() => attemptFocus(retries - 1), 100);
+            return false;
+        }
+        
+        console.warn('Chat input element not found after all attempts');
+        return false;
+    }
+    
+    attemptFocus();
+});
+
 // Handle shortcuts based on current view
 async function handleShortcut(shortcutKey) {
     // Get current view directly from the app element to avoid circular reference
@@ -947,3 +1001,53 @@ const cheddar = {
 
 // Make it globally available
 window.cheddar = cheddar;
+
+// Initialize chat input accessibility when DOM is ready
+function initializeChatInput() {
+    const app = document.querySelector('cheating-daddy-app');
+    if (app && app.shadowRoot) {
+        const assistantView = app.shadowRoot.querySelector('assistant-view');
+        if (assistantView && assistantView.shadowRoot) {
+            const textInput = assistantView.shadowRoot.querySelector('#textInput');
+            if (textInput) {
+                // Ensure the input is focusable
+                textInput.tabIndex = 0;
+                // Add a small focus event to initialize it
+                textInput.addEventListener('focus', function() {
+                    this.style.outline = 'none'; // Remove default outline if needed
+                }, { once: true });
+                console.log('Chat input initialized for focus shortcuts');
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+// Try to initialize immediately, or wait for components to load
+document.addEventListener('DOMContentLoaded', () => {
+    // Try immediate initialization
+    if (!initializeChatInput()) {
+        // If not ready, try again after a short delay
+        setTimeout(() => {
+            if (!initializeChatInput()) {
+                // If still not ready, try again after components are likely loaded
+                setTimeout(initializeChatInput, 1000);
+            }
+        }, 100);
+    }
+});
+
+// Also try when the app changes views
+if (typeof window !== 'undefined') {
+    let lastCurrentView = null;
+    setInterval(() => {
+        const app = document.querySelector('cheating-daddy-app');
+        if (app && app.currentView !== lastCurrentView) {
+            lastCurrentView = app.currentView;
+            if (app.currentView === 'assistant') {
+                setTimeout(initializeChatInput, 100);
+            }
+        }
+    }, 500);
+}

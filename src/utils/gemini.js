@@ -14,6 +14,7 @@ let isInitializingSession = false;
 let recentVoiceQuestion = '';
 let voiceQuestionTimestamp = null;
 let awaitingManualResponse = false;
+let isTextMessageResponse = false; // Track if current response is from text message
 
 function formatSpeakerResults(results) {
     let text = '';
@@ -373,31 +374,40 @@ async function initializeGeminiSession(apiKey, customPrompt = '', profile = 'int
                         }
                     }
 
-                    // Handle AI model response - process for both manual triggers and text messages
+                    // Handle AI model response - show immediately for text messages, require manual trigger for voice
                     if (message.serverContent?.modelTurn?.parts) {
-                        for (const part of message.serverContent.modelTurn.parts) {
-                            console.log(part);
-                            if (part.text) {
-                                messageBuffer += part.text;
-                                sendToRenderer('update-response', messageBuffer);
+                        // Only show response immediately if it's from a text message OR manually triggered
+                        if (isTextMessageResponse || awaitingManualResponse) {
+                            for (const part of message.serverContent.modelTurn.parts) {
+                                console.log(part);
+                                if (part.text) {
+                                    messageBuffer += part.text;
+                                    sendToRenderer('update-response', messageBuffer);
+                                }
                             }
                         }
                     }
 
                     if (message.serverContent?.generationComplete) {
-                        sendToRenderer('update-response', messageBuffer);
+                        // Only finalize response if it's from text message OR manually triggered
+                        if (isTextMessageResponse || awaitingManualResponse) {
+                            sendToRenderer('update-response', messageBuffer);
 
-                        // Save conversation turn when we have both transcription and AI response
-                        if (currentTranscription && messageBuffer) {
-                            saveConversationTurn(currentTranscription, messageBuffer);
-                            currentTranscription = ''; // Reset for next turn
-                        } else if (messageBuffer) {
-                            // Save text message responses too
-                            saveConversationTurn('Text message', messageBuffer);
+                            // Save conversation turn when we have both transcription and AI response
+                            if (currentTranscription && messageBuffer) {
+                                saveConversationTurn(currentTranscription, messageBuffer);
+                                currentTranscription = ''; // Reset for next turn
+                            } else if (messageBuffer && isTextMessageResponse) {
+                                // Save text message responses too
+                                saveConversationTurn('Text message', messageBuffer);
+                            }
+
+                            messageBuffer = '';
                         }
-
-                        messageBuffer = '';
+                        
+                        // Reset flags
                         awaitingManualResponse = false;
+                        isTextMessageResponse = false;
                     }
 
                     if (message.serverContent?.turnComplete) {
@@ -721,6 +731,7 @@ function setupGeminiIpcHandlers(geminiSessionRef) {
             }
 
             console.log('Sending text message:', text);
+            isTextMessageResponse = true; // Flag that next response is from text message
             await geminiSessionRef.current.sendRealtimeInput({ text: text.trim() });
             return { success: true };
         } catch (error) {
@@ -840,21 +851,21 @@ function setupGeminiIpcHandlers(geminiSessionRef) {
                 if (voiceAge < 10000) { // Voice is very recent (< 10 seconds) - pure voice response
                     responseType = hasProjectQuestion ? 'project-voice' : 'voice';
                     if (hasProjectQuestion) {
-                        contextPrompt = `Recent voice input from interview: ${recentVoiceQuestion}\n\n${projectsContext}\n\nPlease provide a detailed answer about my project(s) based on the information above.`;
+                        contextPrompt = `ROLE: You are the candidate in this live interview. Speak naturally as if you're talking face-to-face with the interviewer. Do not mention that you are an AI.\n\nInterview Question: ${recentVoiceQuestion}\n\nYour Projects:\n${projectsContext}\n\nProvide a natural, conversational response about YOUR projects. Use bullet points to organize your thoughts, but speak like a human in an interview. Keep it concise and easy to follow when spoken aloud. Use first person ("I built", "I worked on").`;
                     } else {
-                        contextPrompt = `Recent voice input from interview: ${recentVoiceQuestion}\n\nPlease provide a helpful answer to this interview question or statement.`;
+                        contextPrompt = `ROLE: You are the candidate in this live interview. Speak naturally as if you're talking face-to-face with the interviewer. Do not mention that you are an AI.\n\nInterview Question: ${recentVoiceQuestion}\n\nProvide a natural, conversational response. Use bullet points to organize your thoughts, but speak like a human in an interview. Keep it concise and easy to follow when spoken aloud.`;
                     }
                 } else {
                     responseType = 'mixed';
-                    contextPrompt = `Recent voice input from interview: ${recentVoiceQuestion}\n\nAlso analyze the current screenshot and provide the most relevant response. If the screen shows related content, incorporate it into your answer.`;
+                    contextPrompt = `ROLE: You are the candidate in this live interview. Speak naturally as if talking to the interviewer. Do not mention that you are an AI.\n\nInterview Question: ${recentVoiceQuestion}\n\nAlso analyze the current screenshot and provide the most relevant response as the candidate. Keep it conversational and natural.`;
                 }
             } else if (isVoiceRecent) {
                 // Only voice context - perfect for interviews
                 responseType = hasProjectQuestion ? 'project-voice' : 'voice';
                 if (hasProjectQuestion) {
-                    contextPrompt = `Recent voice input from interview: ${recentVoiceQuestion}\n\n${projectsContext}\n\nPlease provide a detailed answer about my project(s) based on the information above.`;
+                    contextPrompt = `ROLE: You are the candidate in this live interview. Speak naturally as if you're talking face-to-face with the interviewer. Do not mention that you are an AI.\n\nInterview Question: ${recentVoiceQuestion}\n\nYour Projects:\n${projectsContext}\n\nProvide a natural, conversational response about YOUR projects. Use bullet points to organize your thoughts, but speak like a human in an interview. Keep it concise and easy to follow when spoken aloud. Use first person ("I built", "I worked on").`;
                 } else {
-                    contextPrompt = `Recent voice input from interview: ${recentVoiceQuestion}\n\nPlease provide a helpful answer to this interview question or statement.`;
+                    contextPrompt = `ROLE: You are the candidate in this live interview. Speak naturally as if you're talking face-to-face with the interviewer. Do not mention that you are an AI.\n\nInterview Question: ${recentVoiceQuestion}\n\nProvide a natural, conversational response. Use bullet points to organize your thoughts, but speak like a human in an interview. Keep it concise and easy to follow when spoken aloud.`;
                 }
             } else if (hasScreenshotContext) {
                 // Only screenshot context
