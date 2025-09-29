@@ -355,8 +355,26 @@ async function initializeGeminiSession(apiKey, customPrompt = '', profile = 'int
                         }
                     }
 
-                    // Handle AI model response - only process if triggered manually
-                    if (awaitingManualResponse && message.serverContent?.modelTurn?.parts) {
+                    // Capture ALL voice transcriptions for manual response (for live interviews)
+                    if (message.serverContent?.inputTranscription?.text) {
+                        const plainText = message.serverContent.inputTranscription.text.trim();
+                        if (plainText.length > 0) {
+                            // Store ALL voice input as potential questions - let user decide with Ctrl+Enter
+                            currentTranscription += plainText + ' ';
+                            
+                            // Update the recent voice question with complete transcription
+                            // This ensures ANY voice input can be responded to with Ctrl+Enter
+                            recentVoiceQuestion = currentTranscription.trim();
+                            voiceQuestionTimestamp = Date.now();
+                            awaitingManualResponse = false;
+                            
+                            console.log('🎤 Voice input captured:', plainText);
+                            console.log('💭 Ready for manual response with Ctrl+Enter');
+                        }
+                    }
+
+                    // Handle AI model response - process for both manual triggers and text messages
+                    if (message.serverContent?.modelTurn?.parts) {
                         for (const part of message.serverContent.modelTurn.parts) {
                             console.log(part);
                             if (part.text) {
@@ -366,13 +384,16 @@ async function initializeGeminiSession(apiKey, customPrompt = '', profile = 'int
                         }
                     }
 
-                    if (awaitingManualResponse && message.serverContent?.generationComplete) {
+                    if (message.serverContent?.generationComplete) {
                         sendToRenderer('update-response', messageBuffer);
 
                         // Save conversation turn when we have both transcription and AI response
                         if (currentTranscription && messageBuffer) {
                             saveConversationTurn(currentTranscription, messageBuffer);
                             currentTranscription = ''; // Reset for next turn
+                        } else if (messageBuffer) {
+                            // Save text message responses too
+                            saveConversationTurn('Text message', messageBuffer);
                         }
 
                         messageBuffer = '';
@@ -797,13 +818,13 @@ function setupGeminiIpcHandlers(geminiSessionRef) {
             // Get current contexts
             const hasVoiceQuestion = recentVoiceQuestion && voiceQuestionTimestamp;
             const voiceAge = hasVoiceQuestion ? (Date.now() - voiceQuestionTimestamp) : Infinity;
-            const isVoiceRecent = voiceAge < 30000; // 30 seconds threshold
+            const isVoiceRecent = voiceAge < 15000; // 15 seconds window for interview scenarios
 
             console.log(`🧠 Smart response analysis:`, {
                 hasScreenshotContext,
-                hasVoiceQuestion,
+                hasVoiceQuestion: hasVoiceQuestion ? 'YES' : 'NO',
                 isVoiceRecent,
-                voiceAge
+                voiceAge: Math.round(voiceAge / 1000) + 's'
             });
 
             let contextPrompt = '';
@@ -813,27 +834,27 @@ function setupGeminiIpcHandlers(geminiSessionRef) {
             const hasProjectQuestion = isVoiceRecent && detectProjectQuestion(recentVoiceQuestion);
             const projectsContext = hasProjectQuestion ? await getProjectsContextForQuestion(recentVoiceQuestion) : '';
 
-            // Smart decision logic
+            // Smart decision logic - prioritize voice in interview context
             if (isVoiceRecent && hasScreenshotContext) {
-                // Both contexts available - decide based on recency and relevance
-                if (voiceAge < 10000) { // Voice question is very recent (< 10 seconds)
+                // Both contexts available - prioritize voice for interview assistance
+                if (voiceAge < 10000) { // Voice is very recent (< 10 seconds) - pure voice response
                     responseType = hasProjectQuestion ? 'project-voice' : 'voice';
                     if (hasProjectQuestion) {
-                        contextPrompt = `Recent interview question: ${recentVoiceQuestion}\n\n${projectsContext}\n\nPlease provide a detailed answer about my project(s) based on the information above.`;
+                        contextPrompt = `Recent voice input from interview: ${recentVoiceQuestion}\n\n${projectsContext}\n\nPlease provide a detailed answer about my project(s) based on the information above.`;
                     } else {
-                        contextPrompt = `Recent interview question: ${recentVoiceQuestion}\n\nPlease provide a helpful answer to this interview question.`;
+                        contextPrompt = `Recent voice input from interview: ${recentVoiceQuestion}\n\nPlease provide a helpful answer to this interview question or statement.`;
                     }
                 } else {
                     responseType = 'mixed';
-                    contextPrompt = `Recent interview question: ${recentVoiceQuestion}\n\nAlso analyze the current screenshot and provide the most relevant response. If the screen shows related content, incorporate it into your answer.`;
+                    contextPrompt = `Recent voice input from interview: ${recentVoiceQuestion}\n\nAlso analyze the current screenshot and provide the most relevant response. If the screen shows related content, incorporate it into your answer.`;
                 }
             } else if (isVoiceRecent) {
-                // Only voice context
+                // Only voice context - perfect for interviews
                 responseType = hasProjectQuestion ? 'project-voice' : 'voice';
                 if (hasProjectQuestion) {
-                    contextPrompt = `Recent interview question: ${recentVoiceQuestion}\n\n${projectsContext}\n\nPlease provide a detailed answer about my project(s) based on the information above.`;
+                    contextPrompt = `Recent voice input from interview: ${recentVoiceQuestion}\n\n${projectsContext}\n\nPlease provide a detailed answer about my project(s) based on the information above.`;
                 } else {
-                    contextPrompt = `Recent interview question: ${recentVoiceQuestion}\n\nPlease provide a helpful answer to this interview question.`;
+                    contextPrompt = `Recent voice input from interview: ${recentVoiceQuestion}\n\nPlease provide a helpful answer to this interview question or statement.`;
                 }
             } else if (hasScreenshotContext) {
                 // Only screenshot context
