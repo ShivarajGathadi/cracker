@@ -553,12 +553,7 @@ async function captureManualScreenshot(imageQuality = null) {
     console.log('Manual screenshot triggered');
     const quality = imageQuality || currentImageQuality;
     await captureScreenshot(quality, true); // Pass true for isManual
-    await new Promise(resolve => setTimeout(resolve, 2000)); // TODO shitty hack
-    await sendTextMessage(`Help me on this page, give me the answer no bs, complete answer.
-        So if its a code question, give me the approach in few bullet points, then the entire code. Also if theres anything else i need to know, tell me.
-        If its a question about the website, give me the answer no bs, complete answer.
-        If its a mcq question, give me the answer no bs, complete answer.
-        `);
+    // Note: Removed automatic text message sending - now handled by smart response system
 }
 
 // Expose functions to global scope for external access
@@ -733,15 +728,62 @@ ipcRenderer.on('clear-sensitive-data', () => {
 });
 
 // Handle shortcuts based on current view
-function handleShortcut(shortcutKey) {
-    const currentView = cheddar.getCurrentView();
+async function handleShortcut(shortcutKey) {
+    // Get current view directly from the app element to avoid circular reference
+    const app = document.querySelector('cheating-daddy-app');
+    const currentView = app ? app.currentView : 'main';
 
     if (shortcutKey === 'ctrl+enter' || shortcutKey === 'cmd+enter') {
         if (currentView === 'main') {
-            cheddar.element().handleStart();
+            if (app) app.handleStart();
         } else {
-            captureManualScreenshot();
+            await handleSmartResponse();
         }
+    }
+}
+
+// Smart response handler - analyzes both screenshot and voice contexts
+async function handleSmartResponse() {
+    console.log('🧠 Smart response triggered via Ctrl+Enter');
+    
+    try {
+        // Check if we have recent voice question
+        const voiceResult = await ipcRenderer.invoke('get-recent-voice-question');
+        const hasVoiceQuestion = voiceResult.success && voiceResult.data.isRecent;
+        
+        let hasScreenshotContext = false;
+        
+        // Capture screenshot for visual context
+        if (mediaStream) {
+            console.log('📸 Capturing screenshot for context analysis...');
+            const quality = currentImageQuality;
+            await captureScreenshot(quality, true);
+            hasScreenshotContext = true;
+            
+            // Small delay to ensure screenshot is processed
+            await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+        
+        console.log(`📋 Context available - Voice: ${hasVoiceQuestion}, Screenshot: ${hasScreenshotContext}`);
+        
+        // Trigger smart response analysis
+        const result = await ipcRenderer.invoke('trigger-smart-response', hasScreenshotContext);
+        
+        if (result.success) {
+            console.log(`✅ Smart response initiated (${result.responseType})`);
+            // Use the app element directly instead of cheddar to avoid circular reference
+            const app = document.querySelector('cheating-daddy-app');
+            if (app) app.setStatus(`Generating ${result.responseType} response...`);
+        } else {
+            console.error('❌ Failed to trigger smart response:', result.error);
+            const app = document.querySelector('cheating-daddy-app');
+            if (app) app.setStatus('Error: ' + result.error);
+        }
+        
+    } catch (error) {
+        console.error('Error in smart response handler:', error);
+        const app = document.querySelector('cheating-daddy-app');
+        if (app) app.setStatus('Error processing request');
     }
 }
 
@@ -768,6 +810,7 @@ const cheddar = {
     stopCapture,
     sendTextMessage,
     handleShortcut,
+    handleSmartResponse,
 
     // Conversation history functions
     getAllConversationSessions,

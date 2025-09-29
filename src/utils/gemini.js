@@ -10,6 +10,11 @@ let currentTranscription = '';
 let conversationHistory = [];
 let isInitializingSession = false;
 
+// Voice question tracking for manual trigger
+let recentVoiceQuestion = '';
+let voiceQuestionTimestamp = null;
+let awaitingManualResponse = false;
+
 function formatSpeakerResults(results) {
     let text = '';
     for (const result of results) {
@@ -251,11 +256,20 @@ async function initializeGeminiSession(apiKey, customPrompt = '', profile = 'int
                     console.log('----------------', message);
 
                     if (message.serverContent?.inputTranscription?.results) {
-                        currentTranscription += formatSpeakerResults(message.serverContent.inputTranscription.results);
+                        const newTranscription = formatSpeakerResults(message.serverContent.inputTranscription.results);
+                        currentTranscription += newTranscription;
+                        
+                        // Store voice questions from interviewer (Speaker 1) for manual triggering
+                        if (newTranscription.includes('[Interviewer]:')) {
+                            recentVoiceQuestion = currentTranscription;
+                            voiceQuestionTimestamp = Date.now();
+                            awaitingManualResponse = false;
+                            console.log('📢 Voice question detected and stored for manual response');
+                        }
                     }
 
-                    // Handle AI model response
-                    if (message.serverContent?.modelTurn?.parts) {
+                    // Handle AI model response - only process if triggered manually
+                    if (awaitingManualResponse && message.serverContent?.modelTurn?.parts) {
                         for (const part of message.serverContent.modelTurn.parts) {
                             console.log(part);
                             if (part.text) {
@@ -265,7 +279,7 @@ async function initializeGeminiSession(apiKey, customPrompt = '', profile = 'int
                         }
                     }
 
-                    if (message.serverContent?.generationComplete) {
+                    if (awaitingManualResponse && message.serverContent?.generationComplete) {
                         sendToRenderer('update-response', messageBuffer);
 
                         // Save conversation turn when we have both transcription and AI response
@@ -275,6 +289,7 @@ async function initializeGeminiSession(apiKey, customPrompt = '', profile = 'int
                         }
 
                         messageBuffer = '';
+                        awaitingManualResponse = false;
                     }
 
                     if (message.serverContent?.turnComplete) {
@@ -684,6 +699,98 @@ function setupGeminiIpcHandlers(geminiSessionRef) {
             return { success: false, error: error.message };
         }
     });
+
+    // Smart response handler - analyzes both voice and screenshot context
+    ipcMain.handle('trigger-smart-response', async (event, hasScreenshotContext = false) => {
+        if (!geminiSessionRef.current) {
+            return { success: false, error: 'No active Gemini session' };
+        }
+
+        try {
+            // Get current contexts
+            const hasVoiceQuestion = recentVoiceQuestion && voiceQuestionTimestamp;
+            const voiceAge = hasVoiceQuestion ? (Date.now() - voiceQuestionTimestamp) : Infinity;
+            const isVoiceRecent = voiceAge < 30000; // 30 seconds threshold
+
+            console.log(`🧠 Smart response analysis:`, {
+                hasScreenshotContext,
+                hasVoiceQuestion,
+                isVoiceRecent,
+                voiceAge
+            });
+
+            let contextPrompt = '';
+            let responseType = 'screenshot'; // default
+
+            // Smart decision logic
+            if (isVoiceRecent && hasScreenshotContext) {
+                // Both contexts available - decide based on recency and relevance
+                if (voiceAge < 10000) { // Voice question is very recent (< 10 seconds)
+                    responseType = 'voice';
+                    contextPrompt = `Recent interview question: ${recentVoiceQuestion}\n\nPlease provide a helpful answer to this interview question.`;
+                } else {
+                    responseType = 'mixed';
+                    contextPrompt = `Recent interview question: ${recentVoiceQuestion}\n\nAlso analyze the current screenshot and provide the most relevant response. If the screen shows related content, incorporate it into your answer.`;
+                }
+            } else if (isVoiceRecent) {
+                // Only voice context
+                responseType = 'voice';
+                contextPrompt = `Recent interview question: ${recentVoiceQuestion}\n\nPlease provide a helpful answer to this interview question.`;
+            } else if (hasScreenshotContext) {
+                // Only screenshot context
+                responseType = 'screenshot';
+                contextPrompt = `Help me on this page, give me the answer no bs, complete answer.\nSo if its a code question, give me the approach in few bullet points, then the entire code. Also if theres anything else i need to know, tell me.\nIf its a question about the website, give me the answer no bs, complete answer.\nIf its a mcq question, give me the answer no bs, complete answer.`;
+            } else {
+                // No clear context
+                responseType = 'general';
+                contextPrompt = 'Please provide assistance based on the current context.';
+            }
+
+            console.log(`📋 Triggering ${responseType} response`);
+
+            // Set flag to process AI responses
+            awaitingManualResponse = true;
+
+            // Send the context prompt
+            await geminiSessionRef.current.sendRealtimeInput({
+                text: contextPrompt
+            });
+
+            return { 
+                success: true, 
+                responseType,
+                contextUsed: {
+                    voice: isVoiceRecent,
+                    screenshot: hasScreenshotContext
+                }
+            };
+        } catch (error) {
+            console.error('Error triggering smart response:', error);
+            awaitingManualResponse = false;
+            return { success: false, error: error.message };
+        }
+    });
+
+    // Get recent voice question for debugging/status
+    ipcMain.handle('get-recent-voice-question', async (event) => {
+        try {
+            const hasQuestion = recentVoiceQuestion && voiceQuestionTimestamp;
+            const age = hasQuestion ? (Date.now() - voiceQuestionTimestamp) : null;
+            
+            return {
+                success: true,
+                data: {
+                    question: recentVoiceQuestion || null,
+                    timestamp: voiceQuestionTimestamp,
+                    ageMs: age,
+                    isRecent: age && age < 30000
+                }
+            };
+        } catch (error) {
+            console.error('Error getting recent voice question:', error);
+            return { success: false, error: error.message };
+        }
+    });
 }
 
 module.exports = {
@@ -703,4 +810,10 @@ module.exports = {
     setupGeminiIpcHandlers,
     attemptReconnection,
     formatSpeakerResults,
+    // Export voice question tracking for external access if needed
+    getRecentVoiceQuestion: () => ({
+        question: recentVoiceQuestion,
+        timestamp: voiceQuestionTimestamp,
+        awaitingResponse: awaitingManualResponse
+    })
 };
