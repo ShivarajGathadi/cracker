@@ -450,7 +450,10 @@ function setupWindowsLoopbackProcessing() {
 
 async function captureScreenshot(imageQuality = 'medium', isManual = false) {
     console.log(`Capturing ${isManual ? 'manual' : 'automated'} screenshot...`);
-    if (!mediaStream) return;
+    if (!mediaStream) {
+        console.warn('No media stream available for screenshot');
+        return;
+    }
 
     // Check rate limiting for automated screenshots only
     if (!isManual && tokenTracker.shouldThrottle()) {
@@ -458,43 +461,128 @@ async function captureScreenshot(imageQuality = 'medium', isManual = false) {
         return;
     }
 
-    // Lazy init of video element
-    if (!hiddenVideo) {
+    // Check if media stream is still active
+    const videoTracks = mediaStream.getVideoTracks();
+    if (videoTracks.length === 0 || videoTracks[0].readyState === 'ended') {
+        console.warn('📸 Media stream is stale, attempting to refresh...');
+        const refreshed = await refreshMediaStream();
+        if (!refreshed) {
+            console.error('❌ Failed to refresh media stream');
+            return;
+        }
+    }
+
+    // Lazy init of video element or refresh if needed
+    if (!hiddenVideo || hiddenVideo.srcObject !== mediaStream) {
+        console.log('🔄 Initializing/refreshing video element...');
+        
+        // Clean up old video element if exists
+        if (hiddenVideo) {
+            hiddenVideo.pause();
+            hiddenVideo.srcObject = null;
+        }
+        
         hiddenVideo = document.createElement('video');
         hiddenVideo.srcObject = mediaStream;
         hiddenVideo.muted = true;
         hiddenVideo.playsInline = true;
-        await hiddenVideo.play();
+        
+        try {
+            await hiddenVideo.play();
+            
+            await new Promise((resolve, reject) => {
+                const timeout = setTimeout(() => {
+                    reject(new Error('Video load timeout'));
+                }, 5000); // 5 second timeout
+                
+                if (hiddenVideo.readyState >= 2) {
+                    clearTimeout(timeout);
+                    return resolve();
+                }
+                
+                hiddenVideo.onloadedmetadata = () => {
+                    clearTimeout(timeout);
+                    resolve();
+                };
+                
+                hiddenVideo.onerror = () => {
+                    clearTimeout(timeout);
+                    reject(new Error('Video load error'));
+                };
+            });
+            
+            console.log('✅ Video element ready:', {
+                width: hiddenVideo.videoWidth,
+                height: hiddenVideo.videoHeight,
+                readyState: hiddenVideo.readyState
+            });
+        } catch (error) {
+            console.error('❌ Failed to initialize video element:', error);
+            return;
+        }
 
-        await new Promise(resolve => {
-            if (hiddenVideo.readyState >= 2) return resolve();
-            hiddenVideo.onloadedmetadata = () => resolve();
-        });
-
-        // Lazy init of canvas based on video dimensions
+        // Reinitialize canvas with new video dimensions
         offscreenCanvas = document.createElement('canvas');
         offscreenCanvas.width = hiddenVideo.videoWidth;
         offscreenCanvas.height = hiddenVideo.videoHeight;
         offscreenContext = offscreenCanvas.getContext('2d');
+        
+        console.log('🎨 Canvas initialized:', {
+            width: offscreenCanvas.width,
+            height: offscreenCanvas.height
+        });
     }
 
-    // Check if video is ready
+    // Double-check video is ready
     if (hiddenVideo.readyState < 2) {
-        console.warn('Video not ready yet, skipping screenshot');
+        console.warn('⚠️ Video not ready yet, waiting...');
+        
+        // Wait a bit and try again
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        if (hiddenVideo.readyState < 2) {
+            console.error('❌ Video still not ready, skipping screenshot');
+            return;
+        }
+    }
+
+    // Capture the frame
+    try {
+        offscreenContext.drawImage(hiddenVideo, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
+    } catch (error) {
+        console.error('❌ Failed to draw video to canvas:', error);
         return;
     }
 
-    offscreenContext.drawImage(hiddenVideo, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
-
-    // Check if image was drawn properly by sampling a pixel
-    const imageData = offscreenContext.getImageData(0, 0, 1, 1);
-    const isBlank = imageData.data.every((value, index) => {
-        // Check if all pixels are black (0,0,0) or transparent
-        return index === 3 ? true : value === 0;
-    });
-
-    if (isBlank) {
-        console.warn('Screenshot appears to be blank/black');
+    // Enhanced black screen detection
+    const imageData = offscreenContext.getImageData(0, 0, Math.min(100, offscreenCanvas.width), Math.min(100, offscreenCanvas.height));
+    let totalBrightness = 0;
+    let pixelCount = 0;
+    
+    for (let i = 0; i < imageData.data.length; i += 4) {
+        const r = imageData.data[i];
+        const g = imageData.data[i + 1];
+        const b = imageData.data[i + 2];
+        totalBrightness += (r + g + b) / 3;
+        pixelCount++;
+    }
+    
+    const averageBrightness = totalBrightness / pixelCount;
+    
+    if (averageBrightness < 5) { // Very dark image
+        console.warn('⚠️ Screenshot appears to be black (avg brightness:', averageBrightness, ')');
+        console.warn('🔄 Attempting to refresh media stream...');
+        
+        const refreshed = await refreshMediaStream();
+        if (refreshed) {
+            console.log('✅ Media stream refreshed, retrying screenshot...');
+            // Retry once with refreshed stream
+            return captureScreenshot(imageQuality, isManual);
+        } else {
+            console.error('❌ Failed to refresh media stream, proceeding with black screenshot');
+        }
+    } else {
+        console.log('✅ Screenshot appears valid (avg brightness:', averageBrightness, ')');
     }
 
     let qualityValue;
@@ -549,6 +637,122 @@ async function captureScreenshot(imageQuality = 'medium', isManual = false) {
     );
 }
 
+// Function to refresh media stream when it becomes stale
+async function refreshMediaStream() {
+    console.log('🔄 Refreshing media stream...');
+    
+    try {
+        // Stop the current stream
+        if (mediaStream) {
+            mediaStream.getTracks().forEach(track => {
+                track.stop();
+                console.log('🛑 Stopped track:', track.kind, track.readyState);
+            });
+        }
+        
+        // Clean up video element
+        if (hiddenVideo) {
+            hiddenVideo.pause();
+            hiddenVideo.srcObject = null;
+            hiddenVideo = null;
+        }
+        
+        // Clean up canvas
+        offscreenCanvas = null;
+        offscreenContext = null;
+        
+        // Request new screen capture
+        const audioMode = localStorage.getItem('audioMode') || 'speaker_only';
+        
+        if (isMacOS) {
+            // macOS - getDisplayMedia for screen only
+            mediaStream = await navigator.mediaDevices.getDisplayMedia({
+                video: {
+                    frameRate: 1,
+                    width: { ideal: 1920 },
+                    height: { ideal: 1080 },
+                },
+                audio: false, // Audio handled by SystemAudioDump on macOS
+            });
+        } else if (isLinux) {
+            // Linux - try with audio first, fallback to video only
+            try {
+                mediaStream = await navigator.mediaDevices.getDisplayMedia({
+                    video: {
+                        frameRate: 1,
+                        width: { ideal: 1920 },
+                        height: { ideal: 1080 },
+                    },
+                    audio: {
+                        sampleRate: SAMPLE_RATE,
+                        channelCount: 1,
+                        echoCancellation: false,
+                        noiseSuppression: false,
+                        autoGainControl: false,
+                    },
+                });
+            } catch (audioError) {
+                console.warn('Failed to get audio with screen share, trying video only...');
+                mediaStream = await navigator.mediaDevices.getDisplayMedia({
+                    video: {
+                        frameRate: 1,
+                        width: { ideal: 1920 },
+                        height: { ideal: 1080 },
+                    },
+                    audio: false,
+                });
+            }
+        } else {
+            // Windows - getDisplayMedia with loopback audio
+            mediaStream = await navigator.mediaDevices.getDisplayMedia({
+                video: {
+                    frameRate: 1,
+                    width: { ideal: 1920 },
+                    height: { ideal: 1080 },
+                },
+                audio: {
+                    sampleRate: SAMPLE_RATE,
+                    channelCount: 1,
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                    autoGainControl: true,
+                },
+            });
+        }
+        
+        console.log('✅ New media stream obtained:', {
+            hasVideo: mediaStream.getVideoTracks().length > 0,
+            hasAudio: mediaStream.getAudioTracks().length > 0,
+            videoTrack: mediaStream.getVideoTracks()[0]?.getSettings(),
+        });
+        
+        // Re-setup audio processing if needed
+        if (!isMacOS && mediaStream.getAudioTracks().length > 0) {
+            if (isLinux) {
+                setupLinuxSystemAudioProcessing();
+            } else {
+                setupWindowsLoopbackProcessing();
+            }
+        }
+        
+        return true;
+        
+    } catch (error) {
+        console.error('❌ Failed to refresh media stream:', error);
+        
+        // Show user-friendly message based on error type
+        if (error.name === 'NotAllowedError') {
+            console.warn('📸 Screen sharing permission denied. Please grant permission to capture screenshots.');
+        } else if (error.name === 'NotFoundError') {
+            console.warn('📸 No screen sharing source available.');
+        } else {
+            console.warn('📸 Screen sharing failed:', error.message);
+        }
+        
+        return false;
+    }
+}
+
 async function captureManualScreenshot(imageQuality = null) {
     console.log('Manual screenshot triggered');
     const quality = imageQuality || currentImageQuality;
@@ -560,6 +764,8 @@ async function captureManualScreenshot(imageQuality = null) {
 window.captureManualScreenshot = captureManualScreenshot;
 
 function stopCapture() {
+    console.log('🛑 Stopping capture...');
+    
     if (screenshotInterval) {
         clearInterval(screenshotInterval);
         screenshotInterval = null;
@@ -582,7 +788,10 @@ function stopCapture() {
     }
 
     if (mediaStream) {
-        mediaStream.getTracks().forEach(track => track.stop());
+        mediaStream.getTracks().forEach(track => {
+            track.stop();
+            console.log('🛑 Stopped track:', track.kind);
+        });
         mediaStream = null;
     }
 
@@ -601,6 +810,8 @@ function stopCapture() {
     }
     offscreenCanvas = null;
     offscreenContext = null;
+    
+    console.log('✅ Capture stopped and cleaned up');
 }
 
 // Send text message to Gemini
@@ -800,12 +1011,7 @@ async function handleShortcut(shortcutKey) {
 async function handleSmartResponse() {
     console.log('🧠 Smart response triggered via Ctrl+Enter');
     
-    const app = document.querySelector('cheating-daddy-app');
-    
     try {
-        // Set initial status
-        if (app) app.setStatus('Preparing response...');
-        
         // Check if we have recent voice question
         const voiceResult = await ipcRenderer.invoke('get-recent-voice-question');
         const hasVoiceQuestion = voiceResult.success && voiceResult.data.isRecent;
@@ -815,76 +1021,34 @@ async function handleSmartResponse() {
         // Capture screenshot for visual context
         if (mediaStream) {
             console.log('📸 Capturing screenshot for context analysis...');
-            if (app) app.setStatus('Capturing screenshot...');
+            const quality = currentImageQuality;
+            await captureScreenshot(quality, true);
+            hasScreenshotContext = true;
             
-            try {
-                const quality = currentImageQuality;
-                await captureScreenshot(quality, true);
-                hasScreenshotContext = true;
-                console.log('✅ Screenshot captured successfully');
-                
-                // Small delay to ensure screenshot is processed
-                await new Promise(resolve => setTimeout(resolve, 1000));
-            } catch (screenshotError) {
-                console.error('Failed to capture screenshot:', screenshotError);
-                if (app) app.setStatus('Screenshot failed - proceeding with voice only...');
-                // Continue without screenshot context
-            }
-        } else {
-            console.log('📸 No media stream available - proceeding without screenshot');
+            // Small delay to ensure screenshot is processed
+            await new Promise(resolve => setTimeout(resolve, 1000));
         }
         
         console.log(`📋 Context available - Voice: ${hasVoiceQuestion}, Screenshot: ${hasScreenshotContext}`);
         
-        // Show what context we're using
-        if (hasVoiceQuestion && hasScreenshotContext) {
-            if (app) app.setStatus('Analyzing voice + screenshot...');
-        } else if (hasVoiceQuestion) {
-            if (app) app.setStatus('Processing voice question...');
-        } else if (hasScreenshotContext) {
-            if (app) app.setStatus('Analyzing screenshot...');
-        } else {
-            if (app) app.setStatus('No context available - proceeding anyway...');
-        }
-        
-        // Trigger smart response analysis with timeout
-        const timeoutMs = 15000; // 15 second timeout
-        const responsePromise = ipcRenderer.invoke('trigger-smart-response', hasScreenshotContext);
-        const timeoutPromise = new Promise((_, reject) => {
-            setTimeout(() => reject(new Error('Response timeout - Please try again')), timeoutMs);
-        });
-        
-        const result = await Promise.race([responsePromise, timeoutPromise]);
+        // Trigger smart response analysis
+        const result = await ipcRenderer.invoke('trigger-smart-response', hasScreenshotContext);
         
         if (result.success) {
             console.log(`✅ Smart response initiated (${result.responseType})`);
+            // Use the app element directly instead of cheddar to avoid circular reference
+            const app = document.querySelector('cheating-daddy-app');
             if (app) app.setStatus(`Generating ${result.responseType} response...`);
         } else {
             console.error('❌ Failed to trigger smart response:', result.error);
-            if (app) app.setStatus(`Error: ${result.error}`);
-            
-            // Auto-clear error status after a delay
-            setTimeout(() => {
-                if (app) app.setStatus('Ready');
-            }, 3000);
+            const app = document.querySelector('cheating-daddy-app');
+            if (app) app.setStatus('Error: ' + result.error);
         }
         
     } catch (error) {
         console.error('Error in smart response handler:', error);
-        
-        let errorMessage = 'Error processing request';
-        if (error.message.includes('timeout')) {
-            errorMessage = 'Request timed out - Please try again';
-        } else if (error.message.includes('No active Gemini session')) {
-            errorMessage = 'Session not active - Please start the session';
-        }
-        
-        if (app) app.setStatus(errorMessage);
-        
-        // Auto-clear error status after a delay
-        setTimeout(() => {
-            if (app) app.setStatus('Ready');
-        }, 3000);
+        const app = document.querySelector('cheating-daddy-app');
+        if (app) app.setStatus('Error processing request');
     }
 }
 
