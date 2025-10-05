@@ -800,7 +800,12 @@ async function handleShortcut(shortcutKey) {
 async function handleSmartResponse() {
     console.log('🧠 Smart response triggered via Ctrl+Enter');
     
+    const app = document.querySelector('cheating-daddy-app');
+    
     try {
+        // Set initial status
+        if (app) app.setStatus('Preparing response...');
+        
         // Check if we have recent voice question
         const voiceResult = await ipcRenderer.invoke('get-recent-voice-question');
         const hasVoiceQuestion = voiceResult.success && voiceResult.data.isRecent;
@@ -810,34 +815,76 @@ async function handleSmartResponse() {
         // Capture screenshot for visual context
         if (mediaStream) {
             console.log('📸 Capturing screenshot for context analysis...');
-            const quality = currentImageQuality;
-            await captureScreenshot(quality, true);
-            hasScreenshotContext = true;
+            if (app) app.setStatus('Capturing screenshot...');
             
-            // Small delay to ensure screenshot is processed
-            await new Promise(resolve => setTimeout(resolve, 1000));
+            try {
+                const quality = currentImageQuality;
+                await captureScreenshot(quality, true);
+                hasScreenshotContext = true;
+                console.log('✅ Screenshot captured successfully');
+                
+                // Small delay to ensure screenshot is processed
+                await new Promise(resolve => setTimeout(resolve, 1000));
+            } catch (screenshotError) {
+                console.error('Failed to capture screenshot:', screenshotError);
+                if (app) app.setStatus('Screenshot failed - proceeding with voice only...');
+                // Continue without screenshot context
+            }
+        } else {
+            console.log('📸 No media stream available - proceeding without screenshot');
         }
         
         console.log(`📋 Context available - Voice: ${hasVoiceQuestion}, Screenshot: ${hasScreenshotContext}`);
         
-        // Trigger smart response analysis
-        const result = await ipcRenderer.invoke('trigger-smart-response', hasScreenshotContext);
+        // Show what context we're using
+        if (hasVoiceQuestion && hasScreenshotContext) {
+            if (app) app.setStatus('Analyzing voice + screenshot...');
+        } else if (hasVoiceQuestion) {
+            if (app) app.setStatus('Processing voice question...');
+        } else if (hasScreenshotContext) {
+            if (app) app.setStatus('Analyzing screenshot...');
+        } else {
+            if (app) app.setStatus('No context available - proceeding anyway...');
+        }
+        
+        // Trigger smart response analysis with timeout
+        const timeoutMs = 15000; // 15 second timeout
+        const responsePromise = ipcRenderer.invoke('trigger-smart-response', hasScreenshotContext);
+        const timeoutPromise = new Promise((_, reject) => {
+            setTimeout(() => reject(new Error('Response timeout - Please try again')), timeoutMs);
+        });
+        
+        const result = await Promise.race([responsePromise, timeoutPromise]);
         
         if (result.success) {
             console.log(`✅ Smart response initiated (${result.responseType})`);
-            // Use the app element directly instead of cheddar to avoid circular reference
-            const app = document.querySelector('cheating-daddy-app');
             if (app) app.setStatus(`Generating ${result.responseType} response...`);
         } else {
             console.error('❌ Failed to trigger smart response:', result.error);
-            const app = document.querySelector('cheating-daddy-app');
-            if (app) app.setStatus('Error: ' + result.error);
+            if (app) app.setStatus(`Error: ${result.error}`);
+            
+            // Auto-clear error status after a delay
+            setTimeout(() => {
+                if (app) app.setStatus('Ready');
+            }, 3000);
         }
         
     } catch (error) {
         console.error('Error in smart response handler:', error);
-        const app = document.querySelector('cheating-daddy-app');
-        if (app) app.setStatus('Error processing request');
+        
+        let errorMessage = 'Error processing request';
+        if (error.message.includes('timeout')) {
+            errorMessage = 'Request timed out - Please try again';
+        } else if (error.message.includes('No active Gemini session')) {
+            errorMessage = 'Session not active - Please start the session';
+        }
+        
+        if (app) app.setStatus(errorMessage);
+        
+        // Auto-clear error status after a delay
+        setTimeout(() => {
+            if (app) app.setStatus('Ready');
+        }, 3000);
     }
 }
 

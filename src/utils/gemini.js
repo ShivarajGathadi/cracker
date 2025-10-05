@@ -16,6 +16,10 @@ let voiceQuestionTimestamp = null;
 let awaitingManualResponse = false;
 let isTextMessageResponse = false; // Track if current response is from text message
 
+// Session health monitoring
+let lastSessionActivity = Date.now();
+let sessionHealthTimer = null;
+
 function formatSpeakerResults(results) {
     let text = '';
     for (const result of results) {
@@ -35,15 +39,76 @@ let messageBuffer = '';
 
 // Reconnection tracking variables
 let reconnectionAttempts = 0;
-let maxReconnectionAttempts = 3;
-let reconnectionDelay = 2000; // 2 seconds between attempts
+let maxReconnectionAttempts = 5; // Increased from 3 to 5
+let reconnectionDelay = 2000; // 2 seconds between attempts (will use exponential backoff)
 let lastSessionParams = null;
+let reconnectionTimeout = null; // Track timeout for cleanup
 
 function sendToRenderer(channel, data) {
     const windows = BrowserWindow.getAllWindows();
     if (windows.length > 0) {
         windows[0].webContents.send(channel, data);
     }
+}
+
+// Session health monitoring
+function startSessionHealthMonitoring() {
+    // Clear any existing timer
+    if (sessionHealthTimer) {
+        clearInterval(sessionHealthTimer);
+    }
+    
+    // Reset activity timestamp
+    lastSessionActivity = Date.now();
+    
+    // Check session health every 30 seconds
+    sessionHealthTimer = setInterval(() => {
+        const timeSinceActivity = Date.now() - lastSessionActivity;
+        const fiveMinutes = 5 * 60 * 1000; // 5 minutes
+        
+        if (timeSinceActivity > fiveMinutes && global.geminiSessionRef?.current) {
+            console.log('🔍 Session health check: No activity for 5+ minutes, testing connection...');
+            
+            // Test the session with a simple ping
+            testSessionHealth();
+        }
+    }, 30000); // Check every 30 seconds
+}
+
+function stopSessionHealthMonitoring() {
+    if (sessionHealthTimer) {
+        clearInterval(sessionHealthTimer);
+        sessionHealthTimer = null;
+    }
+}
+
+async function testSessionHealth() {
+    if (!global.geminiSessionRef?.current) {
+        return;
+    }
+    
+    try {
+        // Send a minimal test message to check if session is responsive
+        await global.geminiSessionRef.current.sendRealtimeInput({
+            text: "ping" // Simple test message
+        });
+        
+        // If we get here, session is healthy
+        lastSessionActivity = Date.now();
+        console.log('✅ Session health check passed');
+    } catch (error) {
+        console.error('❌ Session health check failed:', error);
+        
+        // Session is unhealthy, trigger reconnection
+        if (lastSessionParams && reconnectionAttempts < maxReconnectionAttempts) {
+            console.log('🔄 Triggering health-based reconnection...');
+            attemptReconnection();
+        }
+    }
+}
+
+function updateSessionActivity() {
+    lastSessionActivity = Date.now();
 }
 
 // Conversation management functions
@@ -251,17 +316,32 @@ async function getProjectsContextForQuestion(question) {
 async function attemptReconnection() {
     if (!lastSessionParams || reconnectionAttempts >= maxReconnectionAttempts) {
         console.log('Max reconnection attempts reached or no session params stored');
-        sendToRenderer('update-status', 'Session closed');
+        sendToRenderer('update-status', 'Session closed - Click Start to reconnect');
         return false;
     }
 
     reconnectionAttempts++;
     console.log(`Attempting reconnection ${reconnectionAttempts}/${maxReconnectionAttempts}...`);
+    
+    // Exponential backoff: 2s, 4s, 8s, 16s, 32s
+    const currentDelay = reconnectionDelay * Math.pow(2, reconnectionAttempts - 1);
+    console.log(`Waiting ${currentDelay}ms before reconnection attempt...`);
+    
+    sendToRenderer('update-status', `Reconnecting in ${Math.ceil(currentDelay/1000)}s... (${reconnectionAttempts}/${maxReconnectionAttempts})`);
 
-    // Wait before attempting reconnection
-    await new Promise(resolve => setTimeout(resolve, reconnectionDelay));
+    // Clear any existing timeout
+    if (reconnectionTimeout) {
+        clearTimeout(reconnectionTimeout);
+    }
+
+    // Wait before attempting reconnection with exponential backoff
+    await new Promise(resolve => {
+        reconnectionTimeout = setTimeout(resolve, currentDelay);
+    });
 
     try {
+        sendToRenderer('update-status', 'Attempting to reconnect...');
+        
         const session = await initializeGeminiSession(
             lastSessionParams.apiKey,
             lastSessionParams.customPrompt,
@@ -273,23 +353,43 @@ async function attemptReconnection() {
         if (session && global.geminiSessionRef) {
             global.geminiSessionRef.current = session;
             reconnectionAttempts = 0; // Reset counter on successful reconnection
-            console.log('Live session reconnected');
+            console.log('Live session reconnected successfully');
+            sendToRenderer('update-status', 'Reconnected - Listening...');
 
             // Send context message with previous transcriptions
             await sendReconnectionContext();
 
             return true;
+        } else {
+            throw new Error('Failed to create session');
         }
     } catch (error) {
         console.error(`Reconnection attempt ${reconnectionAttempts} failed:`, error);
+        
+        // Check for specific error types that shouldn't trigger more reconnections
+        const isApiKeyError = error.message && (
+            error.message.includes('API key not valid') ||
+            error.message.includes('invalid API key') ||
+            error.message.includes('authentication failed') ||
+            error.message.includes('unauthorized')
+        );
+        
+        if (isApiKeyError) {
+            console.log('API key error detected - stopping reconnection attempts');
+            lastSessionParams = null;
+            reconnectionAttempts = maxReconnectionAttempts;
+            sendToRenderer('update-status', 'Invalid API key - Check settings');
+            return false;
+        }
     }
 
-    // If this attempt failed, try again
+    // If this attempt failed, schedule next attempt
     if (reconnectionAttempts < maxReconnectionAttempts) {
+        console.log(`Scheduling next reconnection attempt (${reconnectionAttempts + 1}/${maxReconnectionAttempts})`);
         return attemptReconnection();
     } else {
         console.log('All reconnection attempts failed');
-        sendToRenderer('update-status', 'Session closed');
+        sendToRenderer('update-status', 'Connection failed - Click Start to retry');
         return false;
     }
 }
@@ -339,9 +439,12 @@ async function initializeGeminiSession(apiKey, customPrompt = '', profile = 'int
             callbacks: {
                 onopen: function () {
                     sendToRenderer('update-status', 'Live session connected');
+                    updateSessionActivity();
+                    startSessionHealthMonitoring();
                 },
                 onmessage: function (message) {
                     console.log('----------------', message);
+                    updateSessionActivity(); // Update activity on any message
 
                     if (message.serverContent?.inputTranscription?.results) {
                         const newTranscription = formatSpeakerResults(message.serverContent.inputTranscription.results);
@@ -385,6 +488,8 @@ async function initializeGeminiSession(apiKey, customPrompt = '', profile = 'int
                                     sendToRenderer('update-response', messageBuffer);
                                 }
                             }
+                        } else {
+                            console.log('🔇 AI response received but not displaying (waiting for manual trigger)');
                         }
                     }
 
@@ -403,6 +508,9 @@ async function initializeGeminiSession(apiKey, customPrompt = '', profile = 'int
                             }
 
                             messageBuffer = '';
+                            console.log('✅ Response generation completed successfully');
+                        } else {
+                            console.log('🔇 Response generation completed but not finalized (waiting for manual trigger)');
                         }
                         
                         // Reset flags
@@ -437,6 +545,7 @@ async function initializeGeminiSession(apiKey, customPrompt = '', profile = 'int
                 },
                 onclose: function (e) {
                     console.debug('Session closed:', e.reason);
+                    stopSessionHealthMonitoring(); // Stop health monitoring when session closes
 
                     // Check if the session closed due to invalid API key
                     const isApiKeyError =
@@ -770,9 +879,21 @@ function setupGeminiIpcHandlers(geminiSessionRef) {
     ipcMain.handle('close-session', async event => {
         try {
             stopMacOSAudioCapture();
+            stopSessionHealthMonitoring(); // Stop health monitoring
 
             // Clear session params to prevent reconnection when user closes session
             lastSessionParams = null;
+            reconnectionAttempts = 0;
+            
+            // Clear any pending reconnection timeout
+            if (reconnectionTimeout) {
+                clearTimeout(reconnectionTimeout);
+                reconnectionTimeout = null;
+            }
+            
+            // Reset response flags
+            awaitingManualResponse = false;
+            isTextMessageResponse = false;
 
             // Cleanup any pending resources and stop audio/video capture
             if (geminiSessionRef.current) {
@@ -822,10 +943,14 @@ function setupGeminiIpcHandlers(geminiSessionRef) {
     // Smart response handler - analyzes both voice and screenshot context
     ipcMain.handle('trigger-smart-response', async (event, hasScreenshotContext = false) => {
         if (!geminiSessionRef.current) {
-            return { success: false, error: 'No active Gemini session' };
+            console.error('No active Gemini session when triggering smart response');
+            return { success: false, error: 'No active Gemini session - Please start the session first' };
         }
 
         try {
+            // Reset flag first to ensure clean state
+            awaitingManualResponse = false;
+            
             // Get current contexts
             const hasVoiceQuestion = recentVoiceQuestion && voiceQuestionTimestamp;
             const voiceAge = hasVoiceQuestion ? (Date.now() - voiceQuestionTimestamp) : Infinity;
@@ -878,14 +1003,28 @@ function setupGeminiIpcHandlers(geminiSessionRef) {
             }
 
             console.log(`📋 Triggering ${responseType} response`);
+            
+            // Validate session is still active before sending
+            if (!geminiSessionRef.current) {
+                throw new Error('Session became inactive during processing');
+            }
 
-            // Set flag to process AI responses
+            // Set flag to process AI responses AFTER validation
             awaitingManualResponse = true;
 
-            // Send the context prompt
-            await geminiSessionRef.current.sendRealtimeInput({
+            // Send the context prompt with timeout protection
+            const sendPromise = geminiSessionRef.current.sendRealtimeInput({
                 text: contextPrompt
             });
+            
+            // Add timeout to prevent hanging
+            const timeoutPromise = new Promise((_, reject) => {
+                setTimeout(() => reject(new Error('Request timeout')), 10000); // 10 second timeout
+            });
+            
+            await Promise.race([sendPromise, timeoutPromise]);
+            
+            console.log(`✅ Context prompt sent successfully for ${responseType} response`);
 
             return { 
                 success: true, 
@@ -897,8 +1036,18 @@ function setupGeminiIpcHandlers(geminiSessionRef) {
             };
         } catch (error) {
             console.error('Error triggering smart response:', error);
+            // Always reset flag on error to prevent blocking future responses
             awaitingManualResponse = false;
-            return { success: false, error: error.message };
+            
+            // Provide more specific error messages
+            let errorMessage = error.message;
+            if (error.message.includes('timeout')) {
+                errorMessage = 'Request timed out - Please try again';
+            } else if (error.message.includes('Session became inactive')) {
+                errorMessage = 'Session disconnected - Please restart the session';
+            }
+            
+            return { success: false, error: errorMessage };
         }
     });
 
